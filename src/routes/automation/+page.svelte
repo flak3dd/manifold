@@ -2,6 +2,7 @@
     import { profileStore } from "$lib/stores/profiles.svelte";
     import { proxyStore } from "$lib/stores/proxy.svelte";
     import { automationStore } from "$lib/stores/automation.svelte";
+    import { bridgeStore } from "$lib/stores/bridge.svelte";
     import type { LoginFormConfig, CredentialPair, AttemptResult, LoginRun } from "../../../playwright-bridge/login-types";
     import { resolveDomainProfile, DOMAIN_PROFILES } from "../../../playwright-bridge/login-types";
     import { scrapeFormSelectors, selectorsToFormConfig, FORM_PRESETS } from "$lib/utils/form-scraper";
@@ -54,6 +55,42 @@
     let selectedProfiles   = $state<string[]>([]);
     let showAdvanced       = $state(false);
     let showFormConfig     = $state(true);
+
+    // ── Session profile picker ────────────────────────────────────────────────
+    let sessionProfileId   = $state<string>("");
+    let sessionUrl         = $state("https://");
+    let sessionLaunching   = $state(false);
+    let sessionError       = $state("");
+
+    let sessionProfile = $derived(
+        profiles.find(p => p.id === sessionProfileId) ?? null
+    );
+
+    let bridgeConnected  = $derived(bridgeStore.connected);
+    let bridgeSession    = $derived(bridgeStore.sessionId);
+    let bridgeProfileId  = $derived(bridgeStore.profileId);
+
+    async function launchSession() {
+        if (!sessionProfileId) { sessionError = "Pick a profile first."; return; }
+        sessionError = "";
+        sessionLaunching = true;
+        try {
+            bridgeStore.profileId = sessionProfileId;
+            const port = await profileStore.launchProfile(sessionProfileId, sessionUrl || undefined);
+            await bridgeStore.connect(port);
+        } catch (e) {
+            sessionError = String(e);
+        } finally {
+            sessionLaunching = false;
+        }
+    }
+
+    async function stopSession() {
+        const pid = bridgeProfileId ?? sessionProfileId;
+        if (pid) await profileStore.stopProfile(pid);
+        bridgeStore.disconnect();
+        bridgeStore.profileId = null;
+    }
 
     // ── Results filtering and search ─────────────────────────────────────────
     let resultSearchQuery  = $state("");
@@ -460,6 +497,80 @@
                 {/if}
             {/if}
         </div>
+    </div>
+
+    <!-- ══════════════════════════════════ SESSION PROFILE PICKER BAR ══ -->
+    <div class="session-bar">
+        <div class="session-bar-label">
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                <circle cx="6" cy="4" r="2.5" stroke="currentColor" stroke-width="1.3"/>
+                <path d="M1.5 11c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg>
+            Session
+        </div>
+
+        <!-- Profile dropdown -->
+        <select
+            class="session-select"
+            bind:value={sessionProfileId}
+            disabled={bridgeConnected || sessionLaunching}
+            title="Select fingerprint profile for this session"
+        >
+            <option value="">— pick profile —</option>
+            {#each profiles as p (p.id)}
+                <option value={p.id}>
+                    {p.name}{p.proxy_id ? " · proxy" : ""}
+                </option>
+            {/each}
+        </select>
+
+        <!-- Fingerprint quick-peek badge -->
+        {#if sessionProfile}
+            <span class="session-fp-badge" title="UA: {sessionProfile.fingerprint.user_agent}">
+                <svg width="9" height="9" viewBox="0 0 12 12" fill="none" opacity="0.6">
+                    <rect x="1.5" y="1.5" width="9" height="9" rx="2" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M4 4h4M4 6h4M4 8h2" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+                </svg>
+                {sessionProfile.fingerprint.ua_platform}
+                ·
+                Chrome {sessionProfile.fingerprint.ua_brands.find(b => b.brand === "Google Chrome")?.version ?? "?"}
+                {#if sessionProfile.fingerprint.webgl_renderer}
+                    · {sessionProfile.fingerprint.webgl_renderer.replace(/ANGLE \([^,]+, /i, "").replace(/ Direct3D.*/, "")}
+                {/if}
+            </span>
+        {/if}
+
+        <!-- URL field -->
+        <input
+            class="session-url"
+            type="url"
+            placeholder="https://example.com"
+            bind:value={sessionUrl}
+            disabled={bridgeConnected || sessionLaunching}
+        />
+
+        <!-- Launch / Stop -->
+        {#if bridgeConnected}
+            <span class="session-live-dot" title="Session live on ws://localhost:{bridgeStore.port}">●</span>
+            <span class="session-live-label">{(() => { try { return new URL(bridgeStore.currentUrl ?? "").hostname || "connected"; } catch { return "connected"; } })()}</span>
+            <button class="btn btn-danger btn-xs" onclick={stopSession}>Stop</button>
+        {:else}
+            <button
+                class="btn btn-primary btn-xs"
+                onclick={launchSession}
+                disabled={!sessionProfileId || sessionLaunching}
+            >
+                {#if sessionLaunching}
+                    <span class="spin">◌</span> Launching…
+                {:else}
+                    ▶ Launch
+                {/if}
+            </button>
+        {/if}
+
+        {#if sessionError}
+            <span class="session-error">{sessionError}</span>
+        {/if}
     </div>
 
     <!-- ══════════════════════════════════════════════════════════ TABS ══ -->
@@ -1234,6 +1345,145 @@
 </div><!-- /.page -->
 
 <style>
+    /* ── Session bar ───────────────────────────────────────────── */
+
+    .session-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 16px;
+        background: var(--bg-raised, #111);
+        border-bottom: 1px solid var(--border-subtle);
+        flex-shrink: 0;
+        flex-wrap: wrap;
+        min-height: 36px;
+    }
+
+    .session-bar-label {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--fg-muted);
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+
+    .session-select {
+        height: 26px;
+        padding: 0 8px;
+        font-size: 11px;
+        background: var(--bg-input, #1a1a1a);
+        color: var(--fg);
+        border: 1px solid var(--border-subtle);
+        border-radius: 4px;
+        cursor: pointer;
+        min-width: 160px;
+        max-width: 220px;
+    }
+
+    .session-select:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+
+    .session-select:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .session-fp-badge {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 10px;
+        font-family: var(--font-mono, monospace);
+        color: var(--fg-muted);
+        background: var(--bg-subtle, #181818);
+        border: 1px solid var(--border-subtle);
+        border-radius: 4px;
+        padding: 2px 7px;
+        white-space: nowrap;
+        max-width: 320px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex-shrink: 1;
+    }
+
+    .session-url {
+        height: 26px;
+        padding: 0 8px;
+        font-size: 11px;
+        font-family: var(--font-mono, monospace);
+        background: var(--bg-input, #1a1a1a);
+        color: var(--fg);
+        border: 1px solid var(--border-subtle);
+        border-radius: 4px;
+        flex: 1;
+        min-width: 160px;
+        max-width: 340px;
+    }
+
+    .session-url:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+
+    .session-url:disabled {
+        opacity: 0.5;
+    }
+
+    .session-live-dot {
+        color: var(--success, #3fb950);
+        font-size: 12px;
+        animation: pulse 1.6s ease-in-out infinite;
+        flex-shrink: 0;
+    }
+
+    .session-live-label {
+        font-size: 10px;
+        font-family: var(--font-mono, monospace);
+        color: var(--fg-muted);
+        max-width: 180px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .session-error {
+        font-size: 10px;
+        color: var(--error, #f85149);
+        max-width: 260px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .btn-xs {
+        height: 24px;
+        padding: 0 10px;
+        font-size: 10px;
+        border-radius: 4px;
+        flex-shrink: 0;
+    }
+
+    .spin {
+        display: inline-block;
+        animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.35; }
+    }
+
     /* ── Layout ────────────────────────────────────────────────── */
 
     .page {
