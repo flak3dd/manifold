@@ -185,6 +185,7 @@
     let webrtcMode = $state<"block" | "fake_mdns" | "passthrough">("fake_mdns");
     let uaMobile = $state(false);
     let behaviorProfile = $state<BehaviorProfile>("normal");
+    let aggression = $state(1); // 0-3 range for noise scaling
     let generatingFp = $state(false);
     let activePresetId = $state<string | null>(null);
 
@@ -218,13 +219,14 @@
             audioNoise = newFp.audio_noise;
             hwConcurrency = newFp.hardware_concurrency;
             deviceMemory = newFp.device_memory;
-            webrtcMode = newFp.webrtc_mode;
-            uaMobile = newFp.ua_mobile;
+            webrtcMode = fp.webrtc_mode;
+            uaMobile = fp.ua_mobile;
             selectedTz = newFp.timezone;
             selectedLang =
                 newFp.accept_language.split(",")[0]?.trim() ?? "en-US";
             screenW = newFp.screen_width;
             screenH = newFp.screen_height;
+            aggression = 1; // Default to medium aggression
             activePresetId = null;
         } catch (e) {
             errorMsg = `Fingerprint generation failed: ${e}`;
@@ -248,6 +250,7 @@
         if (o.webrtc_mode !== undefined)
             webrtcMode = o.webrtc_mode as typeof webrtcMode;
         behaviorProfile = p.behavior_profile;
+        aggression = 1; // Reset to default when applying presets
     }
 
     // ── Effects ──────────────────────────────────────────────────────────────────
@@ -305,6 +308,7 @@
             webrtcMode = profile.fingerprint.webrtc_mode;
             uaMobile = profile.fingerprint.ua_mobile;
             behaviorProfile = profile.human.profile;
+            aggression = profile.aggression ?? 1;
         } else {
             await regenerateFp();
         }
@@ -334,6 +338,12 @@
             screen_width: screenW,
             screen_height: screenH,
         };
+
+        // Apply aggression scaling to noise levels
+        const aggressionMult = [0.0, 0.5, 1.0, 2.0][aggression];
+        mergedFp.canvas_noise *= aggressionMult;
+        mergedFp.webgl_noise *= aggressionMult;
+        mergedFp.audio_noise *= aggressionMult;
 
         const target: ProfileTarget | undefined = targetUrl
             ? {
@@ -378,6 +388,8 @@
                     target,
                 );
             }
+            // Set aggression on the saved profile for display
+            saved.aggression = aggression;
             onSaved?.(saved);
             onClose();
         } catch (e) {
@@ -1180,6 +1192,28 @@
                             step="0.0005"
                             bind:value={audioNoise}
                         />
+                    </div>
+
+                    <!-- Aggression slider -->
+                    <div class="field-group slider-group">
+                        <div class="slider-header">
+                            <span class="field-label">Aggression level</span>
+                            <span class="slider-val"
+                                >{["Off", "Low", "Medium", "High"][aggression]} ({aggression}/3)</span
+                            >
+                        </div>
+                        <input
+                            type="range"
+                            class="slider"
+                            min="0"
+                            max="3"
+                            step="1"
+                            bind:value={aggression}
+                        />
+                        <div class="slider-desc">
+                            Scales noise amplitudes: Off=0%, Low=50%,
+                            Medium=100%, High=200%
+                        </div>
                     </div>
 
                     <!-- Hardware -->

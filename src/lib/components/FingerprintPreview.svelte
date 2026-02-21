@@ -29,12 +29,12 @@
     // ── Scoring ───────────────────────────────────────────────────────────────
 
     interface VectorScore {
-        id:      string;
-        label:   string;
-        weight:  number;
-        score:   number;       // 0–100
-        detail:  string;
-        failing: boolean;      // highlight red in UI
+        id: string;
+        label: string;
+        weight: number;
+        score: number; // 0–100
+        detail: string;
+        failing: boolean; // highlight red in UI
     }
 
     function clamp(v: number, lo = 0, hi = 100): number {
@@ -46,97 +46,177 @@
         if (!fp) return [];
 
         // ── Canvas ─────────────────────────────────────────────────────────
-        const canvasNoise    = fp.canvas_noise ?? 0;
-        const canvasScore    = clamp(canvasNoise * 700);  // 0.01→7, 0.15→105 (cap at 100)
-        const canvasFailing  = canvasNoise < 0.02;
+        const canvasNoise = fp.canvas_noise ?? 0;
+        const canvasScore = clamp(canvasNoise * 700); // 0.01→7, 0.15→105 (cap at 100)
+        const canvasFailing = canvasNoise < 0.02;
 
         // ── WebGL ──────────────────────────────────────────────────────────
-        const hasWebglVendor   = !!fp.webgl_vendor && !fp.webgl_vendor.includes("Google Inc") ? 85 : 70;
-        const webglNoise       = fp.webgl_noise ?? 0;
-        const webglScore       = clamp((hasWebglVendor + webglNoise * 200) / 2);
-        const webglFailing     = webglNoise < 0.005;
+        const hasWebglVendor =
+            !!fp.webgl_vendor && !fp.webgl_vendor.includes("Google Inc")
+                ? 85
+                : 70;
+        const webglNoise = fp.webgl_noise ?? 0;
+        const webglScore = clamp((hasWebglVendor + webglNoise * 200) / 2);
+        const webglFailing = webglNoise < 0.005;
 
         // ── AudioContext ───────────────────────────────────────────────────
-        const audioNoise    = fp.audio_noise ?? 0;
-        const audioScore    = clamp(audioNoise * 12000);  // 0.001→12, 0.01→120 (cap 100)
-        const audioFailing  = audioNoise < 0.001;
+        const audioNoise = fp.audio_noise ?? 0;
+        const audioScore = clamp(audioNoise * 12000); // 0.001→12, 0.01→120 (cap 100)
+        const audioFailing = audioNoise < 0.001;
 
         // ── Fonts ──────────────────────────────────────────────────────────
-        const fontCount     = fp.font_subset?.length ?? 0;
+        const fontCount = fp.font_subset?.length ?? 0;
         // < 50 fonts = paranoid = best; > 80 = too many exposed = worse
-        const fontScore     = fontCount === 0 ? 0
-                            : fontCount < 30  ? 100
-                            : fontCount < 50  ? 95
-                            : fontCount < 70  ? 80
-                            : fontCount < 100 ? 60
-                            : 40;
-        const fontFailing   = fontCount > 100 || fontCount === 0;
+        const fontScore =
+            fontCount === 0
+                ? 0
+                : fontCount < 30
+                  ? 100
+                  : fontCount < 50
+                    ? 95
+                    : fontCount < 70
+                      ? 80
+                      : fontCount < 100
+                        ? 60
+                        : 40;
+        const fontFailing = fontCount > 100 || fontCount === 0;
 
         // ── WebRTC ─────────────────────────────────────────────────────────
-        const rtcMode      = fp.webrtc_mode ?? "passthrough";
-        const rtcScore     = rtcMode === "block"      ? 100
-                           : rtcMode === "fake_mdns"  ? 88
-                           : 20;  // passthrough — leaks real IP
-        const rtcFailing   = rtcMode === "passthrough";
+        const rtcMode = fp.webrtc_mode ?? "passthrough";
+        const rtcScore =
+            rtcMode === "block" ? 100 : rtcMode === "fake_mdns" ? 88 : 20; // passthrough — leaks real IP
+        const rtcFailing = rtcMode === "passthrough";
 
         // ── Navigator consistency ──────────────────────────────────────────
         // Check that ua_platform, platform, ua_platform_version all agree
         const navPlatform = (fp.ua_platform ?? "").toLowerCase();
-        const platform    = (fp.platform    ?? "").toLowerCase();
-        const consistent  = navPlatform.includes("win") && platform.includes("win")
-                         || navPlatform.includes("mac") && platform.includes("mac")
-                         || navPlatform.includes("linux") && platform.includes("linux");
-        const hasBrands   = (fp.ua_brands ?? []).length >= 2;
-        const navScore    = clamp((consistent ? 60 : 10) + (hasBrands ? 40 : 0));
-        const navFailing  = !consistent || !hasBrands;
+        const platform = (fp.platform ?? "").toLowerCase();
+        const consistent =
+            (navPlatform.includes("win") && platform.includes("win")) ||
+            (navPlatform.includes("mac") && platform.includes("mac")) ||
+            (navPlatform.includes("linux") && platform.includes("linux"));
+        const hasBrands = (fp.ua_brands ?? []).length >= 2;
+        const navScore = clamp((consistent ? 60 : 10) + (hasBrands ? 40 : 0));
+        const navFailing = !consistent || !hasBrands;
 
         // ── Permissions API ────────────────────────────────────────────────
-        const perms       = fp.permissions ?? {};
-        const permCount   = Object.keys(perms).length;
-        const hasDenied   = Object.values(perms).some(v => v === "denied" || v === "prompt");
-        const permScore   = clamp((permCount >= 3 ? 50 : permCount * 15) + (hasDenied ? 50 : 0));
+        const perms = fp.permissions ?? {};
+        const permCount = Object.keys(perms).length;
+        const hasDenied = Object.values(perms).some(
+            (v) => v === "denied" || v === "prompt",
+        );
+        const permScore = clamp(
+            (permCount >= 3 ? 50 : permCount * 15) + (hasDenied ? 50 : 0),
+        );
         const permFailing = permCount < 2;
 
         return [
-            { id: "canvas",   label: "Canvas 2D",     weight: 0.30, score: canvasScore,  detail: `noise=${(canvasNoise*100).toFixed(1)}%`,                   failing: canvasFailing  },
-            { id: "webgl",    label: "WebGL",          weight: 0.25, score: webglScore,   detail: `${fp.webgl_vendor ?? "unknown"} / noise=${(webglNoise*100).toFixed(1)}%`, failing: webglFailing  },
-            { id: "audio",    label: "AudioContext",   weight: 0.15, score: audioScore,   detail: `noise=${(audioNoise*1e5).toFixed(2)}e-5`,                  failing: audioFailing   },
-            { id: "fonts",    label: "Font Subset",    weight: 0.10, score: fontScore,    detail: `${fontCount} fonts exposed`,                               failing: fontFailing    },
-            { id: "webrtc",   label: "WebRTC",         weight: 0.10, score: rtcScore,     detail: rtcMode,                                                    failing: rtcFailing     },
-            { id: "navigator",label: "Navigator",      weight: 0.05, score: navScore,     detail: consistent ? "consistent" : "⚠ mismatch",                  failing: navFailing     },
-            { id: "perms",    label: "Permissions",    weight: 0.05, score: permScore,    detail: `${permCount} overrides`,                                   failing: permFailing    },
+            {
+                id: "canvas",
+                label: "Canvas 2D",
+                weight: 0.3,
+                score: canvasScore,
+                detail: `noise=${(canvasNoise * 100).toFixed(1)}%`,
+                failing: canvasFailing,
+            },
+            {
+                id: "webgl",
+                label: "WebGL",
+                weight: 0.25,
+                score: webglScore,
+                detail: `${fp.webgl_vendor ?? "unknown"} / noise=${(webglNoise * 100).toFixed(1)}%`,
+                failing: webglFailing,
+            },
+            {
+                id: "audio",
+                label: "AudioContext",
+                weight: 0.15,
+                score: audioScore,
+                detail: `noise=${(audioNoise * 1e5).toFixed(2)}e-5`,
+                failing: audioFailing,
+            },
+            {
+                id: "fonts",
+                label: "Font Subset",
+                weight: 0.1,
+                score: fontScore,
+                detail: `${fontCount} fonts exposed`,
+                failing: fontFailing,
+            },
+            {
+                id: "webrtc",
+                label: "WebRTC",
+                weight: 0.1,
+                score: rtcScore,
+                detail: rtcMode,
+                failing: rtcFailing,
+            },
+            {
+                id: "navigator",
+                label: "Navigator",
+                weight: 0.05,
+                score: navScore,
+                detail: consistent ? "consistent" : "⚠ mismatch",
+                failing: navFailing,
+            },
+            {
+                id: "perms",
+                label: "Permissions",
+                weight: 0.05,
+                score: permScore,
+                detail: `${permCount} overrides`,
+                failing: permFailing,
+            },
         ];
     });
 
     let overallScore = $derived.by((): number => {
         if (vectors.length === 0) return 0;
-        const weighted = vectors.reduce((acc, v) => acc + v.score * v.weight, 0);
+        const weighted = vectors.reduce(
+            (acc, v) => acc + v.score * v.weight,
+            0,
+        );
         return Math.round(clamp(weighted));
     });
 
     let scoreLabel = $derived(
-        overallScore >= 85 ? "Unique"
-      : overallScore >= 70 ? "Moderate"
-      : overallScore >= 50 ? "Weak"
-      : "Exposed"
+        overallScore >= 85
+            ? "Unique"
+            : overallScore >= 70
+              ? "Moderate"
+              : overallScore >= 50
+                ? "Weak"
+                : "Exposed",
     );
 
     let scoreColor = $derived(
-        overallScore >= 85 ? "var(--success)"
-      : overallScore >= 70 ? "var(--warning)"
-      : "var(--error)"
+        overallScore >= 85
+            ? "var(--success)"
+            : overallScore >= 70
+              ? "var(--warning)"
+              : "var(--error)",
     );
 
-    let failingVectors = $derived(vectors.filter(v => v.failing));
+    let failingVectors = $derived(vectors.filter((v) => v.failing));
 
     // ── Iframe previews ───────────────────────────────────────────────────────
 
-    let activePreview = $state<"creepjs" | "pixelscan" | "browserleaks" | null>(null);
+    let activePreview = $state<"creepjs" | "pixelscan" | "browserleaks" | null>(
+        null,
+    );
 
     const PREVIEWS = [
-        { id: "creepjs",     label: "CreepJS",      url: "https://abrahamjuliot.github.io/creepjs/" },
-        { id: "pixelscan",   label: "Pixelscan",    url: "https://pixelscan.net/" },
-        { id: "browserleaks",label: "BrowserLeaks", url: "https://browserleaks.com/canvas" },
+        {
+            id: "creepjs",
+            label: "CreepJS",
+            url: "https://abrahamjuliot.github.io/creepjs/",
+        },
+        { id: "pixelscan", label: "Pixelscan", url: "https://pixelscan.net/" },
+        {
+            id: "browserleaks",
+            label: "BrowserLeaks",
+            url: "https://browserleaks.com/canvas",
+        },
     ] as const;
 </script>
 
@@ -146,28 +226,36 @@
         <div class="score-ring-wrap">
             <svg class="score-ring" viewBox="0 0 80 80" width="80" height="80">
                 <!-- Track -->
-                <circle cx="40" cy="40" r="32"
+                <circle
+                    cx="40"
+                    cy="40"
+                    r="32"
                     fill="none"
                     stroke="var(--border-subtle)"
                     stroke-width="7"
                 />
                 <!-- Fill arc: circumference = 2π·32 ≈ 201 -->
                 {#if fingerprint}
-                <circle cx="40" cy="40" r="32"
-                    fill="none"
-                    stroke={scoreColor}
-                    stroke-width="7"
-                    stroke-linecap="round"
-                    stroke-dasharray="201"
-                    stroke-dashoffset={201 - (overallScore / 100) * 201}
-                    transform="rotate(-90 40 40)"
-                    style="transition: stroke-dashoffset 0.6s ease, stroke 0.4s ease"
-                />
+                    <circle
+                        cx="40"
+                        cy="40"
+                        r="32"
+                        fill="none"
+                        stroke={scoreColor}
+                        stroke-width="7"
+                        stroke-linecap="round"
+                        stroke-dasharray="201"
+                        stroke-dashoffset={201 - (overallScore / 100) * 201}
+                        transform="rotate(-90 40 40)"
+                        style="transition: stroke-dashoffset 0.6s ease, stroke 0.4s ease"
+                    />
                 {/if}
             </svg>
             <div class="score-center">
                 {#if fingerprint}
-                    <span class="score-num" style:color={scoreColor}>{overallScore}</span>
+                    <span class="score-num" style:color={scoreColor}
+                        >{overallScore}</span
+                    >
                     <span class="score-lbl">{scoreLabel}</span>
                 {:else}
                     <span class="score-empty">—</span>
@@ -180,11 +268,14 @@
                 {#if !fingerprint}
                     Select a profile to score its fingerprint vectors.
                 {:else if overallScore >= 85}
-                    Profile passes 2026 stealth thresholds. All major leak vectors hardened.
+                    Profile passes 2026 stealth thresholds. All major leak
+                    vectors hardened.
                 {:else if overallScore >= 70}
-                    Profile is moderately hardened. Review failing vectors below.
+                    Profile is moderately hardened. Review failing vectors
+                    below.
                 {:else}
-                    Critical fingerprint leaks detected. Profile will be identified by detectors.
+                    Critical fingerprint leaks detected. Profile will be
+                    identified by detectors.
                 {/if}
             </p>
             {#if failingVectors.length > 0}
@@ -200,80 +291,97 @@
 
     <!-- ── Per-vector breakdown ───────────────────────────────────────── -->
     {#if fingerprint}
-    <div class="vectors">
-        {#each vectors as v (v.id)}
-        {@const barWidth = v.score}
-        {@const barColor = v.failing ? "var(--error)" : v.score >= 80 ? "var(--success)" : "var(--warning)"}
-        <div class="vector-row" class:failing={v.failing}>
-            <div class="vec-header">
-                <span class="vec-label" class:failing={v.failing}>{v.label}</span>
-                <span class="vec-weight">×{v.weight.toFixed(2)}</span>
-                <span class="vec-score mono" style:color={barColor}>{v.score}</span>
-            </div>
-            <div class="vec-bar-track">
-                <div
-                    class="vec-bar-fill"
-                    style:width="{barWidth}%"
-                    style:background={barColor}
-                ></div>
-            </div>
-            <span class="vec-detail">{v.detail}</span>
+        <div class="vectors">
+            {#each vectors as v (v.id)}
+                {@const barWidth = v.score}
+                {@const barColor = v.failing
+                    ? "var(--error)"
+                    : v.score >= 80
+                      ? "var(--success)"
+                      : "var(--warning)"}
+                <div class="vector-row" class:failing={v.failing}>
+                    <div class="vec-header">
+                        <span class="vec-label" class:failing={v.failing}
+                            >{v.label}</span
+                        >
+                        <span class="vec-weight">×{v.weight.toFixed(2)}</span>
+                        <span class="vec-score mono" style:color={barColor}
+                            >{v.score}</span
+                        >
+                    </div>
+                    <div class="vec-bar-track">
+                        <div
+                            class="vec-bar-fill"
+                            style:width="{barWidth}%"
+                            style:background={barColor}
+                        ></div>
+                    </div>
+                    <span class="vec-detail">{v.detail}</span>
+                </div>
+            {/each}
         </div>
-        {/each}
-    </div>
 
-    <!-- ── Hamming distance info ─────────────────────────────────────── -->
-    <div class="hamming-info">
-        <span class="info-icon">ℹ</span>
-        <span>
-            Per-profile PRNG seed <span class="mono">{fingerprint.seed}</span> —
-            canvas/WebGL/audio outputs diverge by &gt;4 bits (Hamming) from any other seed.
-        </span>
-    </div>
+        <!-- ── Hamming distance info ─────────────────────────────────────── -->
+        <div class="hamming-info">
+            <span class="info-icon">ℹ</span>
+            <span>
+                Per-profile PRNG seed <span class="mono"
+                    >{fingerprint.seed}</span
+                > — canvas/WebGL/audio outputs diverge by &gt;4 bits (Hamming) from
+                any other seed.
+            </span>
+        </div>
     {/if}
 
     <!-- ── External detector iframes ─────────────────────────────────── -->
     {#if showIframes && fingerprint}
-    <div class="iframe-section">
-        <div class="iframe-tabs">
-            {#each PREVIEWS as p}
-            <button
-                class="itab"
-                class:active={activePreview === p.id}
-                onclick={() => activePreview = activePreview === p.id ? null : p.id}
-            >
-                {p.label}
-                {#if p.id === "creepjs"}
-                    <span class="itab-hint">score &gt;85%</span>
+        <div class="iframe-section">
+            <div class="iframe-tabs">
+                {#each PREVIEWS as p}
+                    <button
+                        class="itab"
+                        class:active={activePreview === p.id}
+                        onclick={() =>
+                            (activePreview =
+                                activePreview === p.id ? null : p.id)}
+                    >
+                        {p.label}
+                        {#if p.id === "creepjs"}
+                            <span class="itab-hint">score &gt;85%</span>
+                        {/if}
+                    </button>
+                {/each}
+                {#if activePreview}
+                    <button
+                        class="itab-close"
+                        onclick={() => (activePreview = null)}
+                        title="Close preview">✕</button
+                    >
                 {/if}
-            </button>
-            {/each}
+            </div>
+
             {#if activePreview}
-            <button class="itab-close" onclick={() => activePreview = null} title="Close preview">✕</button>
+                {@const preview = PREVIEWS.find((p) => p.id === activePreview)}
+                {#if preview}
+                    <div class="iframe-wrap">
+                        <div class="iframe-banner">
+                            <span class="iframe-url mono">{preview.url}</span>
+                            <span class="iframe-note">
+                                Opens in profile browser context — scores
+                                reflect active evasions
+                            </span>
+                        </div>
+                        <iframe
+                            src={preview.url}
+                            title="{preview.label} fingerprint test"
+                            class="fp-iframe"
+                            sandbox="allow-scripts allow-same-origin allow-forms"
+                            loading="lazy"
+                        ></iframe>
+                    </div>
+                {/if}
             {/if}
         </div>
-
-        {#if activePreview}
-        {@const preview = PREVIEWS.find(p => p.id === activePreview)}
-        {#if preview}
-        <div class="iframe-wrap">
-            <div class="iframe-banner">
-                <span class="iframe-url mono">{preview.url}</span>
-                <span class="iframe-note">
-                    Opens in profile browser context — scores reflect active evasions
-                </span>
-            </div>
-            <iframe
-                src={preview.url}
-                title="{preview.label} fingerprint test"
-                class="fp-iframe"
-                sandbox="allow-scripts allow-same-origin allow-forms"
-                loading="lazy"
-            ></iframe>
-        </div>
-        {/if}
-        {/if}
-    </div>
     {/if}
 </div>
 
@@ -316,7 +424,7 @@
     .score-num {
         font-size: 20px;
         font-weight: 700;
-        font-family: 'JetBrains Mono', monospace;
+        font-family: "JetBrains Mono", monospace;
         line-height: 1;
         transition: color 0.4s ease;
     }
@@ -332,7 +440,7 @@
     .score-empty {
         font-size: 20px;
         color: var(--text-muted);
-        font-family: 'JetBrains Mono', monospace;
+        font-family: "JetBrains Mono", monospace;
     }
 
     .score-meta {
@@ -371,7 +479,7 @@
         color: var(--error);
         border: 1px solid color-mix(in srgb, var(--error) 30%, transparent);
         border-radius: 3px;
-        font-family: 'JetBrains Mono', monospace;
+        font-family: "JetBrains Mono", monospace;
     }
 
     /* ── Vector breakdown ─────────────────────────────────────────────── */
@@ -418,13 +526,13 @@
     .vec-weight {
         font-size: 10px;
         color: var(--text-muted);
-        font-family: 'JetBrains Mono', monospace;
+        font-family: "JetBrains Mono", monospace;
     }
 
     .vec-score {
         font-size: 12px;
         font-weight: 700;
-        font-family: 'JetBrains Mono', monospace;
+        font-family: "JetBrains Mono", monospace;
         min-width: 28px;
         text-align: right;
     }
@@ -439,13 +547,15 @@
     .vec-bar-fill {
         height: 100%;
         border-radius: 2px;
-        transition: width 0.5s ease, background 0.3s ease;
+        transition:
+            width 0.5s ease,
+            background 0.3s ease;
     }
 
     .vec-detail {
         font-size: 10px;
         color: var(--text-muted);
-        font-family: 'JetBrains Mono', monospace;
+        font-family: "JetBrains Mono", monospace;
     }
 
     /* ── Hamming info ─────────────────────────────────────────────────── */
@@ -471,7 +581,7 @@
     }
 
     .mono {
-        font-family: 'JetBrains Mono', monospace;
+        font-family: "JetBrains Mono", monospace;
         color: var(--accent);
     }
 
@@ -506,7 +616,9 @@
         border: none;
         border-right: 1px solid var(--border-subtle);
         cursor: pointer;
-        transition: background 0.15s, color 0.15s;
+        transition:
+            background 0.15s,
+            color 0.15s;
         white-space: nowrap;
     }
 
@@ -527,7 +639,7 @@
         background: color-mix(in srgb, var(--success) 15%, transparent);
         color: var(--success);
         border-radius: 3px;
-        font-family: 'JetBrains Mono', monospace;
+        font-family: "JetBrains Mono", monospace;
     }
 
     .itab-close {

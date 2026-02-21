@@ -183,6 +183,8 @@ export interface Profile {
   created_at: string; // ISO timestamp
   last_used: string | null;
   data_dir: string;
+  /** Aggression level (0-3) for scaling noise amplitudes */
+  aggression?: number;
   // Derived client-side (not persisted separately)
   target?: ProfileTarget;
 }
