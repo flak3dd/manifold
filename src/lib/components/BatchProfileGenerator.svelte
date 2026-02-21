@@ -8,6 +8,7 @@
 		type GeneratedProfile,
 	} from "$lib/utils/profile-generator";
 	import { profileStore } from "$lib/stores/profiles.svelte";
+	import { proxyStore } from "$lib/stores/proxy.svelte";
 
 	let {
 		onClose,
@@ -37,10 +38,10 @@
 	// Load available proxies
 	async function loadProxies() {
 		try {
-			const proxies = await profileStore.loadProxies();
-			proxyList = proxies.map((p) => ({
+			await proxyStore.loadProxies();
+			proxyList = proxyStore.proxies.map((p) => ({
 				id: p.id,
-				name: p.name || p.server,
+				name: p.name || `${p.host}:${p.port}`,
 			}));
 		} catch (e) {
 			console.error("Failed to load proxies:", e);
@@ -274,7 +275,7 @@
 							type="text"
 							bind:value={customPattern}
 							disabled={isGenerating}
-							placeholder="profile-{index1}"
+							placeholder={"profile-{index1}"}
 						/>
 						<span class="hint">
 							Available: {"{index}"}, {"{index0}"}, {"{index1}"}, {"{seed}"}, {"{seedDec}"}
@@ -376,7 +377,8 @@
 									<span class="badge proxy">Has proxy</span>
 								{/if}
 								<span class="seed">
-									Seed: {(profile.seed >>> 0).toString(16).toUpperCase()}
+
+								Seed: {((profile.seed ?? 0) >>> 0).toString(16).toUpperCase()}
 								</span>
 							</div>
 						</div>

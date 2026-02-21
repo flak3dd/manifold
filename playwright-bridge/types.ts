@@ -1,5 +1,13 @@
 // ── Manifold playwright-bridge types ─────────────────────────────────────────
 
+// ── Global Window extension ───────────────────────────────────────────────────
+
+declare global {
+  interface Window {
+    __manifold_last_status?: number;
+  }
+}
+
 // ── Fingerprint ───────────────────────────────────────────────────────────────
 
 export interface UaBrand {
@@ -134,7 +142,7 @@ export interface Profile {
 export type ProxyType = "http" | "https" | "socks5";
 
 export interface ProxyConfig {
-  server: string;       // e.g. "http://host:port" or "socks5://host:port"
+  server: string; // e.g. "http://host:port" or "socks5://host:port"
   username?: string;
   password?: string;
 }
@@ -166,7 +174,12 @@ export type ClientMessage =
   // ── Form scraping ─────────────────────────────────────────────────────────
   | { type: "scrape_form"; url: string; timeout?: number }
   // ── Login automation ──────────────────────────────────────────────────────
-  | { type: "login_start"; run: import("./login-types.js").LoginRun; profiles: Profile[]; proxies: LoginProxyInfo[] }
+  | {
+      type: "login_start";
+      run: import("./login-types.js").LoginRun;
+      profiles: Profile[];
+      proxies: LoginProxyInfo[];
+    }
   | { type: "login_pause" }
   | { type: "login_resume" }
   | { type: "login_abort" };
@@ -174,7 +187,7 @@ export type ClientMessage =
 /** Slim proxy descriptor sent with login_start so the runner can open browsers. */
 export interface LoginProxyInfo {
   id: string;
-  server: string;       // e.g. "http://host:port"
+  server: string; // e.g. "http://host:port"
   username?: string;
   password?: string;
   healthy: boolean;
@@ -206,21 +219,43 @@ export interface ScrapedFormResult {
 export type ServerMessage =
   | { type: "pong" }
   | { type: "ready"; sessionId: string; wsPort: number }
-  | { type: "log"; sessionId: string; level: "info" | "warn" | "error"; message: string }
-  | { type: "screenshot"; sessionId: string; data: string }   // base64 PNG
+  | {
+      type: "log";
+      sessionId: string;
+      level: "info" | "warn" | "error";
+      message: string;
+    }
+  | { type: "screenshot"; sessionId: string; data: string } // base64 PNG
   | { type: "navigate_done"; sessionId: string; url: string; status: number }
   | { type: "execute_result"; sessionId: string; value: unknown }
   | { type: "extract_result"; sessionId: string; items: string[] }
-  | { type: "har_export"; sessionId: string; har: string }     // JSON HAR
+  | { type: "har_export"; sessionId: string; har: string } // JSON HAR
   | { type: "entropy"; sessionId: string; log: EntropyLog }
   | { type: "scrape_form_result"; result: ScrapedFormResult }
   | { type: "error"; sessionId: string; error: string }
   | { type: "stopped"; sessionId: string }
   // ── Login automation ──────────────────────────────────────────────────────
-  | { type: "login_attempt_start"; run_id: string; credential_id: string; profile_id: string }
-  | { type: "login_attempt_result"; run_id: string; result: import("./login-types.js").AttemptResult }
-  | { type: "login_rotation"; run_id: string; event: import("./login-types.js").RotationEvent }
-  | { type: "login_run_complete"; run_id: string; stats: import("./login-types.js").RunStats }
+  | {
+      type: "login_attempt_start";
+      run_id: string;
+      credential_id: string;
+      profile_id: string;
+    }
+  | {
+      type: "login_attempt_result";
+      run_id: string;
+      result: import("./login-types.js").AttemptResult;
+    }
+  | {
+      type: "login_rotation";
+      run_id: string;
+      event: import("./login-types.js").RotationEvent;
+    }
+  | {
+      type: "login_run_complete";
+      run_id: string;
+      stats: import("./login-types.js").RunStats;
+    }
   | { type: "login_run_paused"; run_id: string }
   | { type: "login_run_aborted"; run_id: string }
   | { type: "login_error"; run_id: string; message: string };

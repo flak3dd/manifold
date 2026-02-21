@@ -5,6 +5,7 @@
     import { bridgeStore } from "$lib/stores/bridge.svelte";
     import { appStore } from "$lib/stores/app.svelte";
     import { automationStore } from "$lib/stores/automation.svelte";
+    import { urlTestStore } from "$lib/stores/urltest.svelte";
     import PanicButton from "$lib/components/PanicButton.svelte";
 
     let {
@@ -23,6 +24,7 @@
     let bridgeSession  = $derived(bridgeStore.sessionId);
     let currentPath    = $derived($page.url.pathname);
     let activeRun      = $derived(automationStore.activeRun);
+    let urlTestRunning = $derived(urlTestStore.isRunning);
 
     const NAV: { href: string; label: string }[] = [
         { href: "/",            label: "Dashboard"   },
@@ -30,6 +32,7 @@
         { href: "/proxies",     label: "Proxies"     },
         { href: "/fingerprint", label: "Fingerprint" },
         { href: "/automation",  label: "Automation"  },
+        { href: "/url-test",    label: "URL Test"    },
         { href: "/trace",       label: "Trace"       },
     ];
 
@@ -75,6 +78,9 @@
                     <span class="nav-pip neutral">{proxyCount}</span>
                 {/if}
                 {#if item.href === "/automation" && activeRun?.status === "running"}
+                    <span class="nav-pip running">●</span>
+                {/if}
+                {#if item.href === "/url-test" && urlTestRunning}
                     <span class="nav-pip running">●</span>
                 {/if}
             </a>

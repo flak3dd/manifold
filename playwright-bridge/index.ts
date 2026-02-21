@@ -20,7 +20,8 @@
 //   MANIFOLD_LAUNCH_CONFIG='{"profile":{...},"proxy":null,"url":"https://example.com","wsPort":8766}' \
 //   tsx playwright-bridge/index.ts
 
-import { chromium } from "playwright";
+import { chromium } from "playwright-extra";
+import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { WebSocketServer } from "ws";
 import type { WebSocket as WsSocket } from "ws";
 import type {
@@ -30,6 +31,9 @@ import type {
   Route,
   Request as PwRequest,
 } from "playwright";
+
+// ── Enable Stealth Plugin for anti-detection ──────────────────────────────────
+chromium.use(StealthPlugin());
 
 import type {
   LaunchConfig,
@@ -389,13 +393,27 @@ async function launchSession(cfg: LaunchConfig): Promise<BridgeSession> {
   const evasionCfg: EvasionConfig = buildEvasionConfig(profile);
   const sessionId = crypto.randomUUID();
 
-  // ── Chromium launch args ────────────────────────────────────────────────
+  // ── Chromium launch args (enhanced anti-detection) ──────────────────────
   const launchArgs: string[] = [
     "--no-sandbox",
     "--disable-setuid-sandbox",
     "--disable-blink-features=AutomationControlled",
     "--disable-features=IsolateOrigins,site-per-process",
     "--disable-site-isolation-trials",
+    "--disable-dev-shm-usage",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-background-networking",
+    "--disable-sync",
+    "--disable-translate",
+    "--disable-extensions",
+    "--disable-hang-monitor",
+    "--disable-prompt-on-repost",
+    "--safebrowsing-disable-auto-update",
+    "--password-store=basic",
+    "--use-mock-keychain",
+    "--disable-infobars",
+    "--disable-notifications",
     `--lang=${fp.locale.replace("_", "-")}`,
     `--window-size=${fp.screen_width},${fp.screen_height}`,
   ];
@@ -433,10 +451,28 @@ async function launchSession(cfg: LaunchConfig): Promise<BridgeSession> {
   }
 
   const context = await browser.newContext(contextOptions);
+
+  // Block known tracking / analytics that inflate bot scores
+  await context.route(
+    /google-analytics\.com|doubleclick\.net|googlesyndication\.com|scorecardresearch\.com|quantserve\.com|hotjar\.com|mouseflow\.com|fullstory\.com/,
+    (route) => route.abort(),
+  );
+
   const page = await context.newPage();
 
   // ── Apply evasions ──────────────────────────────────────────────────────
   await applyAllEvasions(page, evasionCfg);
+
+  // ── Additional anti-detection: intercept and handle automation markers ──
+  page.on("response", (res) => {
+    if (res.status() === 429 || res.status() === 403) {
+      page
+        .evaluate((s: number) => {
+          (window as any).__manifold_last_status = s;
+        }, res.status())
+        .catch(() => {});
+    }
+  });
 
   // ── HAR capture ─────────────────────────────────────────────────────────
   const harEntries: HarEntry[] = [];
@@ -683,36 +719,83 @@ async function dispatch(
               el.getAttribute("autocomplete") ?? "",
               el.getAttribute("aria-label") ?? "",
               el.className ?? "",
-            ].join(" ").toLowerCase();
+            ]
+              .join(" ")
+              .toLowerCase();
             for (const h of hints) if (attrs.includes(h)) s += 10;
             return s;
           }
 
           function bestSelector(el: Element): string {
             if (el.id) return `#${el.id}`;
-            if (el.getAttribute("name")) return `[name="${el.getAttribute("name")}"]`;
-            if (el.getAttribute("type")) return `${el.tagName.toLowerCase()}[type="${el.getAttribute("type")}"]`;
+            if (el.getAttribute("name"))
+              return `[name="${el.getAttribute("name")}"]`;
+            if (el.getAttribute("type"))
+              return `${el.tagName.toLowerCase()}[type="${el.getAttribute("type")}"]`;
             return el.tagName.toLowerCase();
           }
 
-          function findBest(hints: string[], tags = "input,button,select"): string | undefined {
+          function findBest(
+            hints: string[],
+            tags = "input,button,select",
+          ): string | undefined {
             let best: Element | null = null;
             let bestScore = 0;
-            document.querySelectorAll(tags).forEach(el => {
+            document.querySelectorAll(tags).forEach((el) => {
               const s = scoreEl(el, hints);
-              if (s > bestScore) { bestScore = s; best = el; }
+              if (s > bestScore) {
+                bestScore = s;
+                best = el;
+              }
             });
             return best && bestScore > 0 ? bestSelector(best) : undefined;
           }
 
-          const usernameHints  = ["email", "user", "login", "username", "account", "identifier"];
-          const passwordHints  = ["password", "passwd", "pass", "secret"];
-          const submitHints    = ["submit", "login", "sign in", "signin", "continue", "next", "log in"];
-          const successHints   = ["dashboard", "welcome", "account", "profile", "logout", "sign out"];
-          const captchaHints   = ["captcha", "recaptcha", "hcaptcha", "cf-turnstile"];
-          const totpHints      = ["otp", "totp", "2fa", "mfa", "verification", "code", "token", "authenticator"];
+          const usernameHints = [
+            "email",
+            "user",
+            "login",
+            "username",
+            "account",
+            "identifier",
+          ];
+          const passwordHints = ["password", "passwd", "pass", "secret"];
+          const submitHints = [
+            "submit",
+            "login",
+            "sign in",
+            "signin",
+            "continue",
+            "next",
+            "log in",
+          ];
+          const successHints = [
+            "dashboard",
+            "welcome",
+            "account",
+            "profile",
+            "logout",
+            "sign out",
+          ];
+          const captchaHints = [
+            "captcha",
+            "recaptcha",
+            "hcaptcha",
+            "cf-turnstile",
+          ];
+          const totpHints = [
+            "otp",
+            "totp",
+            "2fa",
+            "mfa",
+            "verification",
+            "code",
+            "token",
+            "authenticator",
+          ];
 
-          const usernameEl = document.querySelector('input[type="email"]') ||
+          const usernameEl =
+            document.querySelector('input[type="email"]') ||
             document.querySelector('input[type="text"][name*="user"]') ||
             document.querySelector('input[type="text"][name*="email"]') ||
             document.querySelector('input[autocomplete="username"]') ||
@@ -720,41 +803,62 @@ async function dispatch(
 
           const passwordEl = document.querySelector('input[type="password"]');
 
-          const username_selector = usernameEl ? bestSelector(usernameEl) : findBest(usernameHints);
-          const password_selector = passwordEl ? bestSelector(passwordEl) : findBest(passwordHints);
-          const submit_selector   = findBest(submitHints, "button,input[type='submit'],a");
-          const success_selector  = findBest(successHints, "a,button,nav,header");
-          const captcha_selector  = findBest(captchaHints, "div,iframe,script");
-          const totp_selector     = findBest(totpHints);
+          const username_selector = usernameEl
+            ? bestSelector(usernameEl)
+            : findBest(usernameHints);
+          const password_selector = passwordEl
+            ? bestSelector(passwordEl)
+            : findBest(passwordHints);
+          const submit_selector = findBest(
+            submitHints,
+            "button,input[type='submit'],a",
+          );
+          const success_selector = findBest(
+            successHints,
+            "a,button,nav,header",
+          );
+          const captcha_selector = findBest(captchaHints, "div,iframe,script");
+          const totp_selector = findBest(totpHints);
 
           const html = document.documentElement.innerHTML.toLowerCase();
           const is_spa = !!(
-            document.querySelector("[data-reactroot],[data-reactid],#__next,#__nuxt,#app[data-v-]") ||
-            html.includes("_next/static") || html.includes("__NUXT__") || html.includes("ng-version")
+            document.querySelector(
+              "[data-reactroot],[data-reactid],#__next,#__nuxt,#app[data-v-]",
+            ) ||
+            html.includes("_next/static") ||
+            html.includes("__NUXT__") ||
+            html.includes("ng-version")
           );
           const has_captcha = !!(
-            html.includes("recaptcha") || html.includes("hcaptcha") ||
-            html.includes("cf-turnstile") || html.includes("arkose")
+            html.includes("recaptcha") ||
+            html.includes("hcaptcha") ||
+            html.includes("cf-turnstile") ||
+            html.includes("arkose")
           );
           const has_mfa = !!(
-            html.includes("two-factor") || html.includes("2fa") ||
-            html.includes("authenticator") || html.includes("verification code")
+            html.includes("two-factor") ||
+            html.includes("2fa") ||
+            html.includes("authenticator") ||
+            html.includes("verification code")
           );
 
           let confidence = 0;
           if (username_selector) confidence += 30;
           if (password_selector) confidence += 30;
-          if (submit_selector)   confidence += 25;
-          if (success_selector)  confidence += 10;
-          if (username_selector && password_selector && submit_selector) confidence += 5;
+          if (submit_selector) confidence += 25;
+          if (success_selector) confidence += 10;
+          if (username_selector && password_selector && submit_selector)
+            confidence += 5;
 
           const details: string[] = [];
-          if (username_selector) details.push(`username: "${username_selector}"`);
-          if (password_selector) details.push(`password: "${password_selector}"`);
-          if (submit_selector)   details.push(`submit: "${submit_selector}"`);
-          if (is_spa)            details.push("SPA detected");
-          if (has_captcha)       details.push("CAPTCHA detected");
-          if (has_mfa)           details.push("MFA detected");
+          if (username_selector)
+            details.push(`username: "${username_selector}"`);
+          if (password_selector)
+            details.push(`password: "${password_selector}"`);
+          if (submit_selector) details.push(`submit: "${submit_selector}"`);
+          if (is_spa) details.push("SPA detected");
+          if (has_captcha) details.push("CAPTCHA detected");
+          if (has_mfa) details.push("MFA detected");
 
           return {
             confidence,
@@ -767,7 +871,7 @@ async function dispatch(
             is_spa,
             spa_framework: undefined as string | undefined,
             has_captcha,
-            captcha_providers: has_captcha ? ["detected"] : [] as string[],
+            captcha_providers: has_captcha ? ["detected"] : ([] as string[]),
             has_mfa,
             mfa_type: undefined as string | undefined,
             details,
@@ -800,7 +904,11 @@ async function dispatch(
         broadcast(clients, payload as Parameters<typeof broadcast>[1]);
       };
 
-      loginRunnerRef.current = new LoginRunner(msg.profiles, msg.proxies, broadcastFn);
+      loginRunnerRef.current = new LoginRunner(
+        msg.profiles,
+        msg.proxies,
+        broadcastFn,
+      );
       loginRunnerRef.current.start(msg.run).catch((e: unknown) => {
         broadcast(clients, {
           type: "login_error",

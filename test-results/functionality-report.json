@@ -1,0 +1,183 @@
+{
+  "url": "https://joefortunepokies.win",
+  "timestamp": "2026-02-21T06:41:39.489Z",
+  "durationMs": 20390,
+  "summary": {
+    "PASS": 18,
+    "WARN": 3,
+    "FAIL": 0,
+    "INFO": 12
+  },
+  "overallStatus": "PASS",
+  "results": [
+    {
+      "name": "Page Load",
+      "status": "PASS",
+      "detail": "HTTP 200  in 5632ms",
+      "durationMs": 5632
+    },
+    {
+      "name": "SSL/HTTPS",
+      "status": "PASS",
+      "detail": "Site served over HTTPS"
+    },
+    {
+      "name": "Security Headers",
+      "status": "WARN",
+      "detail": "Present: strict-transport-security, referrer-policy | Missing: content-security-policy, x-frame-options, x-content-type-options, x-xss-protection"
+    },
+    {
+      "name": "CAPTCHA Detection",
+      "status": "WARN",
+      "detail": "Detected: reCAPTCHA",
+      "durationMs": 123
+    },
+    {
+      "name": "WAF Detection",
+      "status": "PASS",
+      "detail": "No WAF signals detected"
+    },
+    {
+      "name": "Bot Detection Libraries",
+      "status": "WARN",
+      "detail": "Detected: BotDetect"
+    },
+    {
+      "name": "Challenge Page",
+      "status": "PASS",
+      "detail": "No challenge page detected — site loaded normally"
+    },
+    {
+      "name": "Form Detection",
+      "status": "PASS",
+      "detail": "Found 1 form(s) on page",
+      "durationMs": 18
+    },
+    {
+      "name": "Form #0 (REGISTRATION)",
+      "status": "INFO",
+      "detail": "Method: POST | Fields: 15 | Submits: [unknown, unknown] | text[name=firstName,id=firstName]*, text[name=lastName,id=lastName]*, date[name=dateOfBirth,id=dateOfBirth]*, tel[name=code-0,id=?], tel[name=code-1,id=?], tel[name=code-2,id=?], tel[name=code-3,id=?], text[name=phone-prefix,id=phone-prefix], tel[name=phone,id=phone]*, email[name=email,id=email]*, password[name=password,id=password]*, text[name=postalCode,id=postalCode]*, text[name=country,id=?], email[name=referralEMail,id=referralEMail], checkbox[name=termsConditionsCheckbox,id=termsConditionsCheckbox]*"
+    },
+    {
+      "name": "Registration Form Analysis",
+      "status": "PASS",
+      "detail": "Detected: Name fields ✓ | Date of Birth ✓ | Email ✓ | Password/PIN ✓ | Phone/Mobile ✓ | Postal Code ✓ | Required: 8/15 fields"
+    },
+    {
+      "name": "Input Elements",
+      "status": "INFO",
+      "detail": "Total: 15 | In forms: 15 | Standalone: 0"
+    },
+    {
+      "name": "SPA Detection",
+      "status": "INFO",
+      "detail": "SPA: Yes | Framework: Next.js"
+    },
+    {
+      "name": "Page Links",
+      "status": "PASS",
+      "detail": "Total: 134 | External scripts: 21"
+    },
+    {
+      "name": "Auth-Related Links",
+      "status": "PASS",
+      "detail": "\"JOIN\" → https://www.joefortunepokies.win/join | \"LOGIN\" → https://www.joefortunepokies.win/login | \"JOIN NOW\" → https://www.joefortunepokies.win/join | \"JOIN NOW\" → https://www.joefortunepokies.win/join | \"Accounts, Payouts And Bonuses\" → https://www.joefortunepokies.win/pages/accounts-payouts-and-bonuses | \"Join\" → https://www.joefortunepokies.win/join | \"Login\" → https://www.joefortunepokies.win/login"
+    },
+    {
+      "name": "Cookies",
+      "status": "INFO",
+      "detail": "Total: 11 | Names: LANG, VISITED, Device-Type, variant, AB, randMktUserId, gtm_page_view, jftcusttype, _pk_id.8.b30a, _pk_ses.8.b30a, st"
+    },
+    {
+      "name": "Trackers Detected",
+      "status": "INFO",
+      "detail": "None identified"
+    },
+    {
+      "name": "Page Title",
+      "status": "PASS",
+      "detail": "Joe Fortune: Online Casino Australia - $5000 Welcome Bonus"
+    },
+    {
+      "name": "Meta Description",
+      "status": "PASS",
+      "detail": "Play the best online casino games at Joe Fortune Australia, including pokies, jackpots and table games. Sign up to get a $5000 welcome bonus!"
+    },
+    {
+      "name": "H1 Headings",
+      "status": "INFO",
+      "detail": "ONLINE CASINO GAMES"
+    },
+    {
+      "name": "H2 Headings",
+      "status": "INFO",
+      "detail": "WELCOME BONUS GET UP TO $5,000\nPLUS 450 FREE SPINS | JOE’S PROMOTIONS | RECENT WINNERS | HOT DROP JACKPOTS | GET YOUR DOSH YOUR WAY | FREQUENTLY ASKED QUESTIONS | ONLINE CASINO AUSTRALIA"
+    },
+    {
+      "name": "Media Assets",
+      "status": "INFO",
+      "detail": "Images: 70 | Videos: 0 | Iframes: 1"
+    },
+    {
+      "name": "Body Content",
+      "status": "PASS",
+      "detail": "15,253 characters of visible text"
+    },
+    {
+      "name": "Network Requests",
+      "status": "PASS",
+      "detail": "Total: 210 | Failed: 1 | image:114, script:67, document:8, font:8, other:6, fetch:4, stylesheet:2, ping:1"
+    },
+    {
+      "name": "Third-Party Domains",
+      "status": "INFO",
+      "detail": "3 domain(s): idg.joefortune.com, www.deviceprotect.eu, www.googletagmanager.com"
+    },
+    {
+      "name": "Console Errors",
+      "status": "INFO",
+      "detail": "Errors: 1 | Warnings: 1 | Total messages: 2"
+    },
+    {
+      "name": "Top Console Errors",
+      "status": "INFO",
+      "detail": "Failed to load resource: net::ERR_CERT_COMMON_NAME_INVALID"
+    },
+    {
+      "name": "navigator.webdriver",
+      "status": "PASS",
+      "detail": "webdriver=false"
+    },
+    {
+      "name": "Stealth Fingerprint",
+      "status": "INFO",
+      "detail": "platform=Win32 | cores=4 | memory=8GB | languages=en-US,en | touchPoints=0"
+    },
+    {
+      "name": "Automation Markers",
+      "status": "PASS",
+      "detail": "Chromium CDC: false | Playwright binding: false"
+    },
+    {
+      "name": "Screenshots",
+      "status": "PASS",
+      "detail": "Captured 3/3: functionality-desktop-1440x900.png, functionality-tablet-768x1024.png, functionality-mobile-375x812.png"
+    },
+    {
+      "name": "Login Navigation",
+      "status": "PASS",
+      "detail": "Clicked login link → https://www.joefortunepokies.win/login (2213ms)",
+      "durationMs": 2213
+    },
+    {
+      "name": "Login Form Present",
+      "status": "PASS",
+      "detail": "Password field detected on login page"
+    },
+    {
+      "name": "JS Execution",
+      "status": "PASS",
+      "detail": "mathOk:✓ dateOk:✓ jsonOk:✓ domOk:✓ storageOk:✓ fetchOk:✓ wsOk:✓"
+    }
+  ]
+}

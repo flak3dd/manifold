@@ -156,6 +156,8 @@ function handleWsMessage(raw: unknown): void {
         cred.last_attempt = new Date().toISOString();
       }
       run.stats = computeRunStats(run.credentials, run.results, run.rotation_log);
+      // Trigger Svelte reactivity
+      runs = [...runs];
       break;
     }
 
@@ -378,7 +380,7 @@ function startRun(runId: string): void {
     id:       p.id,
     server:   `${p.proxy_type}://${p.host}:${p.port}`,
     username: p.username ?? undefined,
-    password: (p as any).password ?? undefined,
+    password: p.password ?? undefined,
     healthy:  p.healthy,
   }));
 

@@ -8,7 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface CredentialPair {
-  id: string;            // uuid, assigned on import
+  id: string; // uuid, assigned on import
   username: string;
   password: string;
   /** Optional extra fields (e.g. TOTP seed, security answers, phone) */
@@ -24,14 +24,14 @@ export interface CredentialPair {
 }
 
 export type CredentialStatus =
-  | "pending"      // not yet attempted
-  | "running"      // currently in flight
-  | "success"      // login confirmed
-  | "failed"       // wrong creds (hard fail — do not retry)
+  | "pending" // not yet attempted
+  | "running" // currently in flight
+  | "success" // login confirmed
+  | "failed" // wrong creds (hard fail — do not retry)
   | "soft_blocked" // rate-limited / CAPTCHA — rotate and retry
   | "hard_blocked" // account locked / banned — skip
-  | "error"        // unexpected error — may retry
-  | "skipped";     // manually skipped
+  | "error" // unexpected error — may retry
+  | "skipped"; // manually skipped
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Login form descriptor
@@ -82,13 +82,13 @@ export interface LoginFormConfig {
 
   /**
    * How long (ms) to wait for the success / failure selector after submit.
-   * Defaults to 8 000.
+   * Defaults to 20 000.
    */
   post_submit_timeout_ms?: number;
 
   /**
    * How long (ms) to wait for the login page to load initially.
-   * Defaults to 15 000.
+   * Defaults to 30 000.
    */
   page_load_timeout_ms?: number;
 
@@ -172,16 +172,16 @@ export type WafSignal =
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type RotationTrigger =
-  | "captcha_detected"       // CAPTCHA widget appeared
-  | "rate_limit_429"         // HTTP 429 response
-  | "rate_limit_response"    // 200 with embedded rate-limit message
-  | "account_locked_signal"  // page indicates account is locked
-  | "ip_block_signal"        // "Your IP has been blocked" type message
-  | "redirect_to_verify"     // redirected to email/phone verification
-  | "anomaly_score_high"     // entropy score dropped below threshold
-  | "consecutive_failures"   // N hard failures in a row
-  | "waf_challenge"          // WAF JS challenge page detected
-  | "manual";                // operator triggered
+  | "captcha_detected" // CAPTCHA widget appeared
+  | "rate_limit_429" // HTTP 429 response
+  | "rate_limit_response" // 200 with embedded rate-limit message
+  | "account_locked_signal" // page indicates account is locked
+  | "ip_block_signal" // "Your IP has been blocked" type message
+  | "redirect_to_verify" // redirected to email/phone verification
+  | "anomaly_score_high" // entropy score dropped below threshold
+  | "consecutive_failures" // N hard failures in a row
+  | "waf_challenge" // WAF JS challenge page detected
+  | "manual"; // operator triggered
 
 export interface RotationEvent {
   ts: number;
@@ -203,7 +203,7 @@ export interface CookieRecord {
   value: string;
   domain: string;
   path: string;
-  expires: number;   // Unix timestamp, -1 = session
+  expires: number; // Unix timestamp, -1 = session
   httpOnly: boolean;
   secure: boolean;
   sameSite: "Strict" | "Lax" | "None" | "";
@@ -212,8 +212,8 @@ export interface CookieRecord {
 export interface SessionState {
   credential_id: string;
   profile_id: string;
-  captured_at: string;           // ISO timestamp
-  url: string;                   // URL at capture time
+  captured_at: string; // ISO timestamp
+  url: string; // URL at capture time
   cookies: CookieRecord[];
   local_storage: Record<string, string>;
   session_storage: Record<string, string>;
@@ -266,11 +266,11 @@ export const TLS_PATCH_ARGS: string[] = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type RunMode =
-  | "sequential"    // one credential at a time
-  | "parallel";     // N credentials concurrently (one browser per slot)
+  | "sequential" // one credential at a time
+  | "parallel"; // N credentials concurrently (one browser per slot)
 
 export interface LoginRunConfig {
-  id: string;              // uuid
+  id: string; // uuid
   form: LoginFormConfig;
 
   /**
@@ -345,7 +345,7 @@ export type AttemptOutcome =
   | "error";
 
 export interface AttemptResult {
-  id: string;                      // uuid
+  id: string; // uuid
   run_id: string;
   credential_id: string;
   profile_id: string;
@@ -387,12 +387,7 @@ export interface AttemptResult {
 // Run state
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type RunStatus =
-  | "idle"
-  | "running"
-  | "paused"
-  | "completed"
-  | "aborted";
+export type RunStatus = "idle" | "running" | "paused" | "completed" | "aborted";
 
 export interface LoginRun {
   id: string;
@@ -426,22 +421,27 @@ export interface RunStats {
 
 /** Messages sent from the frontend to the login runner */
 export type LoginClientMsg =
-  | { type: "login_start";  run: LoginRun }
+  | { type: "login_start"; run: LoginRun }
   | { type: "login_pause" }
   | { type: "login_resume" }
   | { type: "login_abort" }
-  | { type: "login_skip";   credential_id: string }
+  | { type: "login_skip"; credential_id: string }
   | { type: "login_export_session"; credential_id: string };
 
 /** Messages sent from the login runner to the frontend */
 export type LoginServerMsg =
-  | { type: "login_attempt_start";  run_id: string; credential_id: string; profile_id: string }
+  | {
+      type: "login_attempt_start";
+      run_id: string;
+      credential_id: string;
+      profile_id: string;
+    }
   | { type: "login_attempt_result"; run_id: string; result: AttemptResult }
-  | { type: "login_rotation";       run_id: string; event: RotationEvent }
-  | { type: "login_run_complete";   run_id: string; stats: RunStats }
-  | { type: "login_run_paused";     run_id: string }
-  | { type: "login_run_aborted";    run_id: string }
-  | { type: "login_error";          run_id: string; message: string };
+  | { type: "login_rotation"; run_id: string; event: RotationEvent }
+  | { type: "login_run_complete"; run_id: string; stats: RunStats }
+  | { type: "login_run_paused"; run_id: string }
+  | { type: "login_run_aborted"; run_id: string }
+  | { type: "login_error"; run_id: string; message: string };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain profile database (statically known threat levels)
@@ -453,12 +453,12 @@ export const DOMAIN_PROFILES: Record<string, DomainProfile> = {
     threat_level: "medium",
     canvas_noise: 0.18,
     webgl_noise: 0.12,
-    audio_noise: 0.10,
+    audio_noise: 0.1,
     font_subset: "reduced",
     spoof_hw_concurrency: true,
     spoof_device_memory: true,
     typing_speed_factor: 0.85,
-    mouse_speed_factor: 0.90,
+    mouse_speed_factor: 0.9,
     captcha_providers: ["recaptcha_v2"],
     waf_signals: ["cloudflare"],
     min_attempt_gap_ms: 3_500,
@@ -470,13 +470,13 @@ export const DOMAIN_PROFILES: Record<string, DomainProfile> = {
     hostname: "tiktok.com",
     threat_level: "high",
     canvas_noise: 0.25,
-    webgl_noise: 0.20,
+    webgl_noise: 0.2,
     audio_noise: 0.18,
     font_subset: "reduced",
     spoof_hw_concurrency: true,
     spoof_device_memory: true,
     typing_speed_factor: 0.75,
-    mouse_speed_factor: 0.80,
+    mouse_speed_factor: 0.8,
     captcha_providers: ["recaptcha_v2", "arkose_labs"],
     waf_signals: ["akamai"],
     min_attempt_gap_ms: 5_000,
@@ -493,7 +493,7 @@ export const DOMAIN_PROFILES: Record<string, DomainProfile> = {
     font_subset: "reduced",
     spoof_hw_concurrency: true,
     spoof_device_memory: true,
-    typing_speed_factor: 0.70,
+    typing_speed_factor: 0.7,
     mouse_speed_factor: 0.75,
     captcha_providers: ["recaptcha_v2", "hcaptcha"],
     waf_signals: ["cloudflare"],
@@ -506,12 +506,12 @@ export const DOMAIN_PROFILES: Record<string, DomainProfile> = {
     hostname: "amazon.com",
     threat_level: "medium",
     canvas_noise: 0.15,
-    webgl_noise: 0.10,
+    webgl_noise: 0.1,
     audio_noise: 0.08,
     font_subset: "full",
     spoof_hw_concurrency: false,
     spoof_device_memory: false,
-    typing_speed_factor: 0.90,
+    typing_speed_factor: 0.9,
     mouse_speed_factor: 0.95,
     captcha_providers: ["recaptcha_v2"],
     waf_signals: ["custom"],
@@ -523,13 +523,13 @@ export const DOMAIN_PROFILES: Record<string, DomainProfile> = {
   "accounts.google.com": {
     hostname: "accounts.google.com",
     threat_level: "paranoid",
-    canvas_noise: 0.30,
+    canvas_noise: 0.3,
     webgl_noise: 0.25,
     audio_noise: 0.22,
     font_subset: "paranoid",
     spoof_hw_concurrency: true,
     spoof_device_memory: true,
-    typing_speed_factor: 0.60,
+    typing_speed_factor: 0.6,
     mouse_speed_factor: 0.65,
     captcha_providers: ["recaptcha_v2", "recaptcha_v3"],
     waf_signals: ["custom"],
@@ -559,14 +559,14 @@ export const DOMAIN_PROFILES: Record<string, DomainProfile> = {
   "linkedin.com": {
     hostname: "linkedin.com",
     threat_level: "high",
-    canvas_noise: 0.20,
+    canvas_noise: 0.2,
     webgl_noise: 0.16,
     audio_noise: 0.14,
     font_subset: "reduced",
     spoof_hw_concurrency: true,
     spoof_device_memory: true,
     typing_speed_factor: 0.75,
-    mouse_speed_factor: 0.80,
+    mouse_speed_factor: 0.8,
     captcha_providers: ["recaptcha_v2"],
     waf_signals: ["imperva"],
     min_attempt_gap_ms: 7_000,
@@ -578,13 +578,13 @@ export const DOMAIN_PROFILES: Record<string, DomainProfile> = {
     hostname: "cloudflare.com",
     threat_level: "paranoid",
     canvas_noise: 0.35,
-    webgl_noise: 0.30,
+    webgl_noise: 0.3,
     audio_noise: 0.25,
     font_subset: "paranoid",
     spoof_hw_concurrency: true,
     spoof_device_memory: true,
     typing_speed_factor: 0.55,
-    mouse_speed_factor: 0.60,
+    mouse_speed_factor: 0.6,
     captcha_providers: ["cloudflare_turnstile"],
     waf_signals: ["cloudflare"],
     min_attempt_gap_ms: 12_000,
@@ -598,7 +598,7 @@ export const DOMAIN_PROFILES: Record<string, DomainProfile> = {
 export const DEFAULT_DOMAIN_PROFILE: DomainProfile = {
   hostname: "unknown",
   threat_level: "low",
-  canvas_noise: 0.10,
+  canvas_noise: 0.1,
   webgl_noise: 0.08,
   audio_noise: 0.06,
   font_subset: "full",
@@ -645,7 +645,10 @@ export function resolveDomainProfile(url: string): DomainProfile {
  * Also accepts colon-separated "user:pass" lines with no header.
  */
 export function parseCredentialCsv(raw: string): CredentialPair[] {
-  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const lines = raw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
   if (lines.length === 0) return [];
 
   const pairs: CredentialPair[] = [];
@@ -659,12 +662,14 @@ export function parseCredentialCsv(raw: string): CredentialPair[] {
 
   // Only treat as header if it contains commas AND header keywords
   if (firstLine.includes(",")) {
-    const parsedHeaders = firstLine.split(",").map(h => h.trim().toLowerCase());
-    const hasUsernameCol = parsedHeaders.some(h =>
-      h === "username" || h === "email" || h === "login" || h === "user"
+    const parsedHeaders = firstLine
+      .split(",")
+      .map((h) => h.trim().toLowerCase());
+    const hasUsernameCol = parsedHeaders.some(
+      (h) => h === "username" || h === "email" || h === "login" || h === "user",
     );
-    const hasPasswordCol = parsedHeaders.some(h =>
-      h === "password" || h === "pass" || h === "pwd"
+    const hasPasswordCol = parsedHeaders.some(
+      (h) => h === "password" || h === "pass" || h === "pwd",
     );
 
     if (hasUsernameCol && hasPasswordCol) {
@@ -674,10 +679,18 @@ export function parseCredentialCsv(raw: string): CredentialPair[] {
     } else if (
       // If it looks like it was intended as a header (has header keywords)
       // but is missing required columns, reject the entire input
-      parsedHeaders.some(h =>
-        h === "username" || h === "email" || h === "login" || h === "user" ||
-        h === "password" || h === "pass" || h === "pwd" ||
-        h === "first_name" || h === "last_name" || h === "name"
+      parsedHeaders.some(
+        (h) =>
+          h === "username" ||
+          h === "email" ||
+          h === "login" ||
+          h === "user" ||
+          h === "password" ||
+          h === "pass" ||
+          h === "pwd" ||
+          h === "first_name" ||
+          h === "last_name" ||
+          h === "name",
       )
     ) {
       // Looks like a header row but missing username/password columns
@@ -696,11 +709,12 @@ export function parseCredentialCsv(raw: string): CredentialPair[] {
 
     if (hasHeader) {
       const cols = line.split(",");
-      const uIdx = headers.findIndex(h =>
-        h === "username" || h === "email" || h === "login" || h === "user"
+      const uIdx = headers.findIndex(
+        (h) =>
+          h === "username" || h === "email" || h === "login" || h === "user",
       );
-      const pIdx = headers.findIndex(h =>
-        h === "password" || h === "pass" || h === "pwd"
+      const pIdx = headers.findIndex(
+        (h) => h === "password" || h === "pass" || h === "pwd",
       );
       if (uIdx === -1 || pIdx === -1) continue;
       username = cols[uIdx]?.trim() ?? "";
@@ -747,17 +761,26 @@ export function parseCredentialJson(raw: string): CredentialPair[] {
     if (!Array.isArray(arr)) return [];
 
     return arr
-      .filter(item => typeof item === "object" && item !== null)
+      .filter((item) => typeof item === "object" && item !== null)
       .map((item): CredentialPair | null => {
         const username =
           item.username ?? item.email ?? item.login ?? item.user ?? "";
-        const password =
-          item.password ?? item.pass ?? item.pwd ?? "";
+        const password = item.password ?? item.pass ?? item.pwd ?? "";
         if (!username || !password) return null;
 
         const extras: Record<string, string> = {};
         for (const [k, v] of Object.entries(item)) {
-          if (!["username","email","login","user","password","pass","pwd"].includes(k)) {
+          if (
+            ![
+              "username",
+              "email",
+              "login",
+              "user",
+              "password",
+              "pass",
+              "pwd",
+            ].includes(k)
+          ) {
             extras[k] = String(v);
           }
         }
@@ -786,28 +809,44 @@ export function computeRunStats(
   rotationLog: RotationEvent[],
 ): RunStats {
   const counts = {
-    total:        credentials.length,
-    pending:      0,
-    running:      0,
-    success:      0,
-    failed:       0,
+    total: credentials.length,
+    pending: 0,
+    running: 0,
+    success: 0,
+    failed: 0,
     soft_blocked: 0,
     hard_blocked: 0,
-    error:        0,
-    skipped:      0,
-    rotations:    rotationLog.length,
+    error: 0,
+    skipped: 0,
+    rotations: rotationLog.length,
   };
 
   for (const c of credentials) {
     switch (c.status) {
-      case "pending":      counts.pending++;      break;
-      case "running":      counts.running++;      break;
-      case "success":      counts.success++;      break;
-      case "failed":       counts.failed++;       break;
-      case "soft_blocked": counts.soft_blocked++; break;
-      case "hard_blocked": counts.hard_blocked++; break;
-      case "error":        counts.error++;        break;
-      case "skipped":      counts.skipped++;      break;
+      case "pending":
+        counts.pending++;
+        break;
+      case "running":
+        counts.running++;
+        break;
+      case "success":
+        counts.success++;
+        break;
+      case "failed":
+        counts.failed++;
+        break;
+      case "soft_blocked":
+        counts.soft_blocked++;
+        break;
+      case "hard_blocked":
+        counts.hard_blocked++;
+        break;
+      case "error":
+        counts.error++;
+        break;
+      case "skipped":
+        counts.skipped++;
+        break;
     }
   }
 

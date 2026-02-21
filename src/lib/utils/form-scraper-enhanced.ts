@@ -12,7 +12,7 @@
  * - Multi-step form handling
  */
 
-import type { LoginFormConfig } from "../../playwright-bridge/login-types";
+import type { LoginFormConfig } from "../../../playwright-bridge/login-types";
 
 export interface EnhancedScraperOptions {
   url: string;
@@ -471,14 +471,14 @@ function scoreElement(
 
   // Boost score based on element attributes
   const attributes = {
-    type: element.getAttribute('type'),
-    name: element.getAttribute('name'),
-    id: element.getAttribute('id'),
-    placeholder: element.getAttribute('placeholder'),
-    ariaLabel: element.getAttribute('aria-label'),
-    ariaLabelledBy: element.getAttribute('aria-labelledby'),
-    class: element.className,
-    role: element.getAttribute('role'),
+    type: element.getAttribute('type') ?? undefined,
+    name: element.getAttribute('name') ?? undefined,
+    id: element.getAttribute('id') ?? undefined,
+    placeholder: element.getAttribute('placeholder') ?? undefined,
+    ariaLabel: element.getAttribute('aria-label') ?? undefined,
+    ariaLabelledBy: element.getAttribute('aria-labelledby') ?? undefined,
+    class: element.className || undefined,
+    role: element.getAttribute('role') ?? undefined,
   };
 
   // Attribute-based scoring
@@ -750,3 +750,56 @@ export async function enhancedScrapeFormSelectors(
     // Calculate overall confidence
     const validSelectors = [
       result.username_selector,
+      result.password_selector,
+      result.submit_selector,
+    ].filter(Boolean);
+
+    const optionalSelectors = [
+      result.success_selector,
+      result.failure_selector,
+    ].filter(Boolean);
+
+    // Base confidence from required fields
+    const requiredWeight = validSelectors.length / 3;
+    const optionalBonus = optionalSelectors.length * 0.05;
+    const avgFieldConfidence =
+      (result.fieldConfidences.username +
+        result.fieldConfidences.password +
+        result.fieldConfidences.submit) /
+      3;
+
+    result.confidence = Math.min(
+      100,
+      Math.round(requiredWeight * avgFieldConfidence + optionalBonus * 100),
+    );
+
+    // Determine selector quality
+    if (result.confidence >= 80) {
+      result.selectorQuality = 'excellent';
+    } else if (result.confidence >= 60) {
+      result.selectorQuality = 'good';
+    } else if (result.confidence >= 40) {
+      result.selectorQuality = 'fair';
+    } else {
+      result.selectorQuality = 'poor';
+    }
+
+    // Estimate complexity
+    if (result.isMultiStep || result.hasCaptcha || result.hasMFA) {
+      result.estimatedComplexity = 'complex';
+    } else if (result.hasIframe || result.hasShadowDOM) {
+      result.estimatedComplexity = 'moderate';
+    } else {
+      result.estimatedComplexity = 'simple';
+    }
+
+    result.details.push(`Overall confidence: ${result.confidence}%`);
+    result.details.push(`Selector quality: ${result.selectorQuality}`);
+
+  } catch (e) {
+    result.details.push(`Error during enhanced scraping: ${e instanceof Error ? e.message : String(e)}`);
+    result.warnings.push('Enhanced scraping encountered an error');
+  }
+
+  return result;
+}

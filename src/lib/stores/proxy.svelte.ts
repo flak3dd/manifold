@@ -13,7 +13,7 @@ import type {
 // ── Tauri availability and dynamic import ──────────────────────────────────
 
 function isTauriAvailable(): boolean {
-  return typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__;
+  return typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
 }
 
 let invokeCache: typeof import("@tauri-apps/api/core").invoke | null = null;
@@ -354,8 +354,12 @@ async function addProxy(payload: AddProxyPayload): Promise<Proxy> {
     throw new Error("Failed to add proxy: Tauri unavailable");
   }
 
-  proxies = [raw, ...proxies];
-  return raw;
+  // Backend strips password via #[serde(skip_serializing)].
+  // Preserve it client-side so the automation bridge can authenticate.
+  const proxy: Proxy = { ...raw, password: payload.password ?? null };
+
+  proxies = [proxy, ...proxies];
+  return proxy;
 }
 
 /** Add a BrightData sticky-session proxy */
@@ -391,8 +395,18 @@ async function updateProxy(
     throw new Error("Failed to update proxy: Tauri unavailable");
   }
 
-  proxies = proxies.map((p) => (p.id === id ? raw : p));
-  return raw;
+  // Backend strips password via #[serde(skip_serializing)].
+  // If the payload included a new password, keep it client-side.
+  // Otherwise preserve the password we already had for this proxy.
+  const existing = proxies.find((p) => p.id === id);
+  const password =
+    payload.password !== undefined
+      ? (payload.password ?? null)
+      : (existing?.password ?? null);
+  const proxy: Proxy = { ...raw, password };
+
+  proxies = proxies.map((p) => (p.id === id ? proxy : p));
+  return proxy;
 }
 
 async function deleteProxy(id: string): Promise<void> {

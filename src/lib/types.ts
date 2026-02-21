@@ -217,6 +217,10 @@ export interface Proxy {
   host: string;
   port: number;
   username: string | null;
+  /** Backend never serialises this (encrypted at rest, skipped via serde).
+   *  Populated client-side when a proxy is added in the current session so
+   *  the automation bridge can configure authenticated proxies. */
+  password: string | null;
   country: string | null;
   healthy: boolean;
   latency_ms: number | null;
@@ -487,15 +491,169 @@ export interface ScrapeResult {
   durationMs: number;
 }
 
+// ── URL Test types ────────────────────────────────────────────────────────────
+
+export type UrlTestStatus = "PASS" | "WARN" | "FAIL" | "INFO";
+
+export interface UrlTestResult {
+  name: string;
+  status: UrlTestStatus;
+  detail: string;
+  durationMs?: number;
+}
+
+export interface UrlTestFormField {
+  tag: string;
+  type: string;
+  name: string;
+  id: string;
+  placeholder: string;
+  required: boolean;
+  autocomplete: string;
+  label: string;
+}
+
+export interface UrlTestDetectedForm {
+  action: string;
+  method: string;
+  fields: UrlTestFormField[];
+  submitButtons: string[];
+  formType: string;
+  formIndex: number;
+}
+
+export interface UrlTestScreenshots {
+  desktop?: string; // base64 PNG
+  tablet?: string; // base64 PNG
+  mobile?: string; // base64 PNG
+}
+
+export interface UrlTestSummary {
+  pass: number;
+  warn: number;
+  fail: number;
+  info: number;
+}
+
+export interface UrlTestLoginResult {
+  attempted: boolean;
+  navigatedToLogin: boolean;
+  loginUrl?: string;
+  usernameFieldFound: boolean;
+  passwordFieldFound: boolean;
+  submitButtonFound: boolean;
+  submitted: boolean;
+  postSubmitUrl?: string;
+  outcomeGuess?:
+    | "success"
+    | "wrong_credentials"
+    | "captcha_block"
+    | "rate_limited"
+    | "2fa_required"
+    | "error"
+    | "unknown";
+  detail: string;
+  screenshot?: string; // base64 PNG — post-login
+  /** Actual CSS selector the scraper resolved for the username/email field */
+  usernameSelector?: string;
+  /** Actual CSS selector the scraper resolved for the password field */
+  passwordSelector?: string;
+  /** Actual CSS selector the scraper resolved for the submit button */
+  submitSelector?: string;
+
+  // ── Extended login-flow detection ───────────────────────────────────
+  /** Screenshot of the login form before credentials were submitted */
+  preLoginScreenshot?: string; // base64 PNG
+  /** Page title after login attempt */
+  postLoginPageTitle?: string;
+  /** Whether the URL changed after submitting the form */
+  urlChanged?: boolean;
+
+  /** CSS selector for success indicators detected post-login (dashboard, profile, logout link…) */
+  successSelector?: string;
+  /** Human-readable list of success signals found */
+  successSignals?: string[];
+
+  /** CSS selector for failure / error indicators detected post-login */
+  failureSelector?: string;
+  /** Human-readable list of failure signals found */
+  failureSignals?: string[];
+
+  /** CSS selector for CAPTCHA elements detected on the login page */
+  captchaSelector?: string;
+  /** CAPTCHA provider names found on the login page (reCAPTCHA, hCaptcha, etc.) */
+  captchaProviders?: string[];
+
+  /** CSS selector for a consent / cookie banner detected on the login page */
+  consentSelector?: string;
+  /** Whether a consent banner was auto-dismissed */
+  consentDismissed?: boolean;
+
+  /** CSS selector for a TOTP / 2FA input that appeared after login */
+  totpSelector?: string;
+  /** Whether the login flow is multi-step (e.g. username first, then password on next page) */
+  isMultiStep?: boolean;
+  /** Detail about the multi-step flow if detected */
+  multiStepDetail?: string;
+
+  /** Rate-limit or lockout signals detected after submit */
+  rateLimitSignals?: string[];
+}
+
+// ── WebSocket message types ───────────────────────────────────────────────────
+
 export type WsClientMessage =
   | { type: "scrape"; sourceId: string; url: string; selector: string }
-  | { type: "ping" };
+  | { type: "ping" }
+  | {
+      type: "url_test";
+      testId: string;
+      url: string;
+      username?: string;
+      password?: string;
+    };
 
 export type WsServerMessage =
   | { type: "status"; sourceId: string; status: "scraping" }
   | { type: "result"; sourceId: string; content: string[]; durationMs: number }
   | { type: "error"; sourceId: string; message: string }
-  | { type: "pong" };
+  | { type: "pong" }
+  | {
+      type: "url_test_progress";
+      testId: string;
+      testName: string;
+      testIndex: number;
+      totalTests: number;
+      status: "running" | "done";
+    }
+  | {
+      type: "url_test_result";
+      testId: string;
+      result: UrlTestResult;
+    }
+  | {
+      type: "url_test_forms";
+      testId: string;
+      forms: UrlTestDetectedForm[];
+    }
+  | {
+      type: "url_test_login";
+      testId: string;
+      login: UrlTestLoginResult;
+    }
+  | {
+      type: "url_test_complete";
+      testId: string;
+      summary: UrlTestSummary;
+      overallStatus: UrlTestStatus;
+      durationMs: number;
+      screenshots: UrlTestScreenshots;
+    }
+  | {
+      type: "url_test_error";
+      testId: string;
+      message: string;
+    };
 
 export type AddSourcePayload = Pick<
   Source,

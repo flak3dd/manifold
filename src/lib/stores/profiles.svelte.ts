@@ -298,6 +298,8 @@ async function createProfile(
       tags: payload.tags ?? [],
       status: "idle",
       created_at: new Date().toISOString(),
+      last_used: null,
+      data_dir: "",
     };
 
     profiles = [profile, ...profiles];
@@ -352,7 +354,7 @@ async function updateProfile(
       proxy_id: payload.proxy_id !== undefined ? payload.proxy_id : existing.proxy_id,
       notes: notes ?? existing.notes,
       tags: payload.tags ?? existing.tags,
-      status: payload.status ?? existing.status,
+      status: existing.status,
     };
 
     profiles = profiles.map((p) => (p.id === id ? updated : p));

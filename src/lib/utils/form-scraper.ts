@@ -5,7 +5,7 @@
  * Uses headless browser automation to identify login form elements.
  */
 
-import type { LoginFormConfig } from "../../playwright-bridge/login-types";
+import type { LoginFormConfig } from "../../../playwright-bridge/login-types";
 
 export interface FormScraperOptions {
   url: string;
@@ -271,7 +271,7 @@ function generateSelector(element: Element): string {
  * Falls back to client-side detection if Tauri is unavailable
  */
 export async function scrapeFormSelectors(
-  options: FormScraperOptions & { waitForSPA?: boolean; detectCaptcha?: boolean; detectMFA?: boolean } = {},
+  options: FormScraperOptions & { waitForSPA?: boolean; detectCaptcha?: boolean; detectMFA?: boolean },
 ): Promise<ScrapedFormSelectors> {
   const timeout = options.timeout || 15000;
   const details: string[] = [];
@@ -335,9 +335,10 @@ export async function scrapeFormSelectors(
         ...bridgeResult,
         details: [...details, ...(bridgeResult.details ?? [])],
       };
-    } else if (bridgeResult?.error) {
-      console.warn("[formScraper] Playwright bridge returned error:", bridgeResult.error);
-      details.push(`Playwright bridge error: ${bridgeResult.error}`);
+    } else if ((bridgeResult as unknown as Record<string, unknown>)?.error) {
+      const errMsg = (bridgeResult as unknown as Record<string, unknown>).error;
+      console.warn("[formScraper] Playwright bridge returned error:", errMsg);
+      details.push(`Playwright bridge error: ${errMsg}`);
     } else {
       console.warn("[formScraper] Playwright bridge returned low/zero confidence");
       details.push("Playwright bridge returned low confidence");
@@ -372,6 +373,7 @@ export async function scrapeFormSelectors(
   // Return empty result with detailed explanation
   console.error("[formScraper] ❌ All detection methods failed");
   return {
+    url: options.url,
     confidence: 0,
     details: [
       ...details,
@@ -545,7 +547,7 @@ async function detectFormInFrame(
 
       if (bestElement && bestScore > 0) {
         const key = `${fieldType}_selector` as keyof ScrapedFormSelectors;
-        selectors[key] = bestSelector;
+        (selectors as Record<string, unknown>)[key] = bestSelector;
         scores[fieldType] = bestScore;
         details.push(
           `${fieldType}: "${bestSelector}" (score: ${bestScore})`,

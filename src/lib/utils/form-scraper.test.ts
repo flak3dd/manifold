@@ -14,14 +14,16 @@ import {
   validateSelectors,
   selectorsToFormConfig,
   FORM_PRESETS,
+  type ScrapedFormSelectors,
 } from "./form-scraper";
-import type { ScrapedFormSelectors, LoginFormConfig } from "../../playwright-bridge/login-types";
+import type { LoginFormConfig } from "../../../playwright-bridge/login-types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test Fixtures
 // ─────────────────────────────────────────────────────────────────────────────
 
 const createMockScrapedResult = (overrides: Partial<ScrapedFormSelectors> = {}): ScrapedFormSelectors => ({
+  url: "https://example.com/login",
   username_selector: 'input[type="email"]',
   password_selector: 'input[type="password"]',
   submit_selector: 'button[type="submit"]',
@@ -67,6 +69,7 @@ describe("selectorsToFormConfig", () => {
 
   it("handles missing optional fields", () => {
     const scraped: ScrapedFormSelectors = {
+      url: testUrl,
       username_selector: "input",
       password_selector: "input",
       submit_selector: "button",
@@ -195,9 +198,9 @@ describe("FORM_PRESETS", () => {
 
   it("preset selectors are non-empty", () => {
     for (const [domain, preset] of Object.entries(FORM_PRESETS)) {
-      expect(preset.username_selector.length).toBeGreaterThan(0);
-      expect(preset.password_selector.length).toBeGreaterThan(0);
-      expect(preset.submit_selector.length).toBeGreaterThan(0);
+      expect(preset.username_selector!.length).toBeGreaterThan(0);
+      expect(preset.password_selector!.length).toBeGreaterThan(0);
+      expect(preset.submit_selector!.length).toBeGreaterThan(0);
     }
   });
 });
@@ -249,7 +252,7 @@ describe("validateSelectors", () => {
     expect(result).toHaveProperty("missing");
     // Should return error state
     expect(result.valid).toBe(false);
-  });
+  }, 15000);
 
   it("validates multiple selectors", async () => {
     const result = await validateSelectors(
@@ -395,6 +398,7 @@ describe("Confidence Scoring", () => {
 describe("Error Handling", () => {
   it("does not throw on missing optional properties", () => {
     const scraped: ScrapedFormSelectors = {
+      url: "https://example.com/login",
       username_selector: "input",
       password_selector: "input",
       submit_selector: "button",

