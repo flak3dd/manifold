@@ -1,0 +1,228 @@
+<file_path>
+manifold\docker-compose.yml
+</file_path>
+
+<edit_description>
+Create docker-compose.yml for multi-instance Manifold farm
+</edit_description>
+
+version: '3.8'
+
+services:
+  # Manifold Farm Manager - Central coordination service
+  manifold-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: manifold-manager
+    environment:
+      - MANIFOLD_MODE=manager
+      - MANIFOLD_FARM_SIZE=10
+      - MANIFOLD_MASTER_KEY=${MANIFOLD_MASTER_KEY:-}
+      - MANIFOLD_DEBUG=${MANIFOLD_DEBUG:-0}
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "8080:8765"  # Manager API
+    volumes:
+      - manifold_shared:/app/shared
+      - manifold_logs:/app/logs
+    depends_on:
+      - redis
+    networks:
+      - manifold-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8766/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Redis for coordination and caching
+  redis:
+    image: redis:7-alpine
+    container_name: manifold-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - manifold-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Manifold Worker Instances (Scale as needed)
+  manifold-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - MANIFOLD_MODE=worker
+      - MANIFOLD_MANAGER_URL=http://manifold-manager:8765
+      - REDIS_URL=redis://redis:6379
+      - MANIFOLD_MASTER_KEY=${MANIFOLD_MASTER_KEY:-}
+      - MANIFOLD_DEBUG=${MANIFOLD_DEBUG:-0}
+      - MANIFOLD_INSTANCE_ID=${INSTANCE_ID:-1}
+    volumes:
+      - manifold_data:/app/data
+      - manifold_shared:/app/shared
+      - manifold_logs:/app/logs
+    depends_on:
+      - manifold-manager
+      - redis
+    networks:
+      - manifold-net
+    restart: unless-stopped
+    deploy:
+      replicas: ${WORKER_REPLICAS:-3}
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8766/health"]
+      interval: 45s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
+
+  # PostgreSQL for farm-wide analytics (optional, replace SQLite)
+  postgres:
+    image: postgres:15-alpine
+    container_name: manifold-postgres
+    environment:
+      - POSTGRES_DB=manifold
+      - POSTGRES_USER=manifold
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-manifold_secure}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - manifold-net
+    restart: unless-stopped
+    profiles:
+      - analytics  # Only start with --profile analytics
+
+  # Grafana for monitoring and analytics
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: manifold-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-manifold_admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+    networks:
+      - manifold-net
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:v2.48.1
+    container_name: manifold-prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    networks:
+      - manifold-net
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+networks:
+  manifold-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  manifold_data:
+    driver: local
+  manifold_shared:
+    driver: local
+  manifold_logs:
+    driver: local
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+  grafana_data:
+    driver: local
+  prometheus_data:
+    driver: local
+
+# Environment configuration
+x-environment: &default-env
+  MANIFOLD_MASTER_KEY: ${MANIFOLD_MASTER_KEY:-}
+  MANIFOLD_DEBUG: ${MANIFOLD_DEBUG:-0}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-manifold_secure}
+  GRAFANA_PASSWORD: ${GRAFANA_PASSWORD:-manifold_admin}
+
+# Instance scaling configuration
+x-worker-config: &worker-config
+  deploy:
+    replicas: ${WORKER_REPLICAS:-5}
+    placement:
+      constraints:
+        - node.role == worker
+    restart_policy:
+      condition: on-failure
+      delay: 10s
+      max_attempts: 3
+      window: 300s
+    update_config:
+      parallelism: 2
+      delay: 10s
+    resources:
+      limits:
+        cpus: '2.0'
+        memory: 4G
+      reservations:
+        cpus: '1.0'
+        memory: 2G
+
+# Usage examples:
+#
+# Basic single instance:
+# docker-compose up manifold-manager
+#
+# Farm with 10 workers:
+# WORKER_REPLICAS=10 docker-compose up
+#
+# Full monitoring stack:
+# docker-compose --profile monitoring up
+#
+# Analytics with PostgreSQL:
+# docker-compose --profile analytics up
+#
+# Production deployment:
+# docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
+#
+# Scaling workers:
+# docker-compose up --scale manifold-worker=20
+#
+# Health check:
+# docker-compose ps
+# docker-compose exec manifold-manager curl http://localhost:8766/health

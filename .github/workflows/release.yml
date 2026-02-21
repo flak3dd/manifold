@@ -1,0 +1,157 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  release-tauri:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+            code_sign_identity: 'Developer ID Application: Your Developer ID (TEAM_ID)'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+            code_sign_identity: 'Developer ID Application: Your Developer ID (TEAM_ID)'
+          - platform: 'ubuntu-22.04'
+            args: ''
+          - platform: 'windows-latest'
+            args: ''
+            certificate_thumbprint: 'YOUR_CERTIFICATE_THUMBPRINT'
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Sync node version and setup cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: 'npm'
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Run tests
+        run: npm test
+
+      - name: Import Windows certificate
+        if: matrix.platform == 'windows-latest'
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$WINDOWS_CERTIFICATE" | base64 -d > cert.p12
+          certutil -importpfx -p "$WINDOWS_CERTIFICATE_PASSWORD" cert.p12
+
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS code signing
+          MACOSX_CERTIFICATE: ${{ secrets.MACOSX_CERTIFICATE }}
+          MACOSX_CERTIFICATE_PASSWORD: ${{ secrets.MACOSX_CERTIFICATE_PASSWORD }}
+          MACOSX_CERTIFICATE_NAME: ${{ matrix.code_sign_identity }}
+          MACOSX_CERTIFICATE_P12: ${{ secrets.MACOSX_CERTIFICATE_P12 }}
+          # Windows code signing
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          # Tauri configuration
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+        with:
+          args: ${{ matrix.args }}
+          tagName: ${{ github.event.release.tag_name }}
+          releaseName: 'Manifold v${{ github.event.release.tag_name }}'
+          releaseBody: 'See the assets to download this version and install.'
+          releaseDraft: false
+          prerelease: false
+          includeRelease: true
+
+  update-homebrew:
+    runs-on: ubuntu-latest
+    needs: release-tauri
+    if: startsWith(github.event.release.tag_name, 'v')
+    steps:
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: flak3dd/homebrew-manifold
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Update formula
+        run: |
+          cd homebrew-tap
+          # Update the version and SHA256 hashes in the formula
+          sed -i "s/version \".*\"/version \"${{ github.event.release.tag_name }}\"/g" Formula/manifold.rb
+
+          # Download and calculate SHA256 for each platform
+          for asset in $(curl -s https://api.github.com/repos/flak3dd/manifold/releases/latest | jq -r '.assets[].browser_download_url'); do
+            if [[ $asset == *"manifold"* ]] && [[ $asset == *".tar.gz"* ]]; then
+              platform=$(basename "$asset" | sed 's/manifold.*_//' | sed 's/\.tar\.gz//')
+              sha256=$(curl -L "$asset" | sha256sum | cut -d' ' -f1)
+              case $platform in
+                "x86_64-apple-darwin") sed -i "s/sha256.*x86_64-apple-darwin.*$/sha256 \"$sha256\" # x86_64-apple-darwin/g" Formula/manifold.rb ;;
+                "aarch64-apple-darwin") sed -i "s/sha256.*aarch64-apple-darwin.*$/sha256 \"$sha256\" # aarch64-apple-darwin/g" Formula/manifold.rb ;;
+                "x86_64-unknown-linux-gnu") sed -i "s/sha256.*x86_64-unknown-linux-gnu.*$/sha256 \"$sha256\" # x86_64-unknown-linux-gnu/g" Formula/manifold.rb ;;
+                "x86_64-pc-windows-msvc") sed -i "s/sha256.*x86_64-pc-windows-msvc.*$/sha256 \"$sha256\" # x86_64-pc-windows-msvc/g" Formula/manifold.rb ;;
+              esac
+            fi
+          done
+
+      - name: Commit and push changes
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Update Manifold to ${{ github.event.release.tag_name }}"
+          git push
+
+  publish-cargo:
+    runs-on: ubuntu-latest
+    needs: release-tauri
+    if: startsWith(github.event.release.tag_name, 'v')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cd src-tauri
+          cargo publish --allow-dirty
+```

@@ -16,7 +16,7 @@ import { generateFingerprintFallback } from "$lib/fingerprint";
 // ── Tauri availability and dynamic import ──────────────────────────────────
 
 function isTauriAvailable(): boolean {
-  return typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__;
+  return typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
 }
 
 let invokeCache: typeof import("@tauri-apps/api/core").invoke | null = null;
@@ -61,7 +61,7 @@ async function safeInvoke<T = unknown>(
 const STORAGE_KEY = "manifold_profiles";
 
 function loadProfilesFromStorage(): Profile[] {
-  if (typeof window === 'undefined') return [];
+  if (typeof window === "undefined") return [];
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) return [];
@@ -74,7 +74,7 @@ function loadProfilesFromStorage(): Profile[] {
 }
 
 function saveProfilesToStorage(profs: Profile[]): void {
-  if (typeof window === 'undefined') return;
+  if (typeof window === "undefined") return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(profs));
   } catch (e) {
@@ -236,7 +236,9 @@ async function loadProfiles(): Promise<void> {
       saveProfilesToStorage(profiles);
     } else {
       // Fallback: load from localStorage if Tauri unavailable
-      console.log("[profileStore] Tauri unavailable, loading from localStorage");
+      console.log(
+        "[profileStore] Tauri unavailable, loading from localStorage",
+      );
       const stored = loadProfilesFromStorage();
       profiles = stored.map(hydrateProfile);
     }
@@ -247,7 +249,10 @@ async function loadProfiles(): Promise<void> {
       const stored = loadProfilesFromStorage();
       profiles = stored.map(hydrateProfile);
     } catch (fallbackError) {
-      console.error("[profileStore] Both Tauri and fallback failed:", fallbackError);
+      console.error(
+        "[profileStore] Both Tauri and fallback failed:",
+        fallbackError,
+      );
     }
   } finally {
     loading = false;
@@ -283,7 +288,9 @@ async function createProfile(
 
   // Fallback: create profile locally if Tauri unavailable
   if (!raw) {
-    console.log("[profileStore] Tauri unavailable, creating profile in localStorage");
+    console.log(
+      "[profileStore] Tauri unavailable, creating profile in localStorage",
+    );
     const profile: Profile = {
       id: crypto.randomUUID(),
       name: payload.name,
@@ -340,7 +347,9 @@ async function updateProfile(
 
   if (!raw) {
     // Fallback: update profile locally if Tauri unavailable
-    console.log("[profileStore] Tauri unavailable, updating profile in localStorage");
+    console.log(
+      "[profileStore] Tauri unavailable, updating profile in localStorage",
+    );
     const existing = profiles.find((p) => p.id === id);
     if (!existing) {
       throw new Error("Profile not found");
@@ -351,7 +360,8 @@ async function updateProfile(
       name: payload.name ?? existing.name,
       fingerprint: payload.fingerprint ?? existing.fingerprint,
       human: payload.human ?? existing.human,
-      proxy_id: payload.proxy_id !== undefined ? payload.proxy_id : existing.proxy_id,
+      proxy_id:
+        payload.proxy_id !== undefined ? payload.proxy_id : existing.proxy_id,
       notes: notes ?? existing.notes,
       tags: payload.tags ?? existing.tags,
       status: existing.status,
@@ -404,7 +414,9 @@ async function reseedProfile(id: string, seed?: number): Promise<Profile> {
 async function generateFingerprint(seed?: number): Promise<Fingerprint> {
   // Try Tauri backend first; fall back to JS implementation if unavailable
   try {
-    const fp = await safeInvoke<Fingerprint>("generate_fingerprint", { seed: seed ?? null });
+    const fp = await safeInvoke<Fingerprint>("generate_fingerprint", {
+      seed: seed ?? null,
+    });
     if (fp) {
       return fp;
     }

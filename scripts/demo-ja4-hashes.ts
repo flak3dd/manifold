@@ -1,11 +1,3 @@
-<file_path>
-manifold\scripts\demo-ja4-hashes.ts
-</file_path>
-
-<edit_description>
-Create demo script showing JA4 hash generation across seeds
-</edit_description>
-
 import { generateJa4Hash } from "../evasions/tls-bridge.js";
 
 /**
@@ -23,18 +15,18 @@ console.log("=====================================\n");
 
 // ── Seed ranges to test ──────────────────────────────────────────────────────
 const TEST_SEEDS = [
-  1,      // Minimal seed
-  42,     // Common demo value
-  12345,  // Medium value
-  99999,  // High value
-  0,      // Edge case
+  1, // Minimal seed
+  42, // Common demo value
+  12345, // Medium value
+  99999, // High value
+  0, // Edge case
 ];
 
 // ── Generate and display hashes ──────────────────────────────────────────────
 console.log("Seed → JA4 Hash Mapping:");
 console.log("-".repeat(30));
 
-TEST_SEEDS.forEach(seed => {
+TEST_SEEDS.forEach((seed) => {
   const hash = generateJa4Hash(seed);
   console.log(`  ${seed.toString().padStart(8)} → ${hash}`);
 });
@@ -54,17 +46,19 @@ function hammingDistance(str1: string, str2: string): number {
   return distance;
 }
 
-const hashes = TEST_SEEDS.map(s => generateJa4Hash(s));
+const hashes = TEST_SEEDS.map((s) => generateJa4Hash(s));
 const distancePairs: string[] = [];
 
 for (let i = 0; i < hashes.length; i++) {
   for (let j = i + 1; j < hashes.length; j++) {
     const dist = hammingDistance(hashes[i], hashes[j]);
-    distancePairs.push(`  ${TEST_SEEDS[i]}↔${TEST_SEEDS[j]}: ${dist.toString().padStart(2)} bits`);
+    distancePairs.push(
+      `  ${TEST_SEEDS[i]}↔${TEST_SEEDS[j]}: ${dist.toString().padStart(2)} bits`,
+    );
   }
 }
 
-distancePairs.forEach(pair => console.log(pair));
+distancePairs.forEach((pair) => console.log(pair));
 
 // ── Real-world context ───────────────────────────────────────────────────────
 console.log("\n" + "-".repeat(50));
@@ -72,7 +66,9 @@ console.log("Real-World Impact:");
 console.log(`• Akamai Bot Manager: Targets JA4 clustering at network level`);
 console.log(`• DataDome: Uses TLS fingerprinting for device reputation`);
 console.log(`• Cloudflare: Compares JA4 against historical profiles`);
-console.log(`• This entropy: Prevents fingerprint correlation across sessions\n`);
+console.log(
+  `• This entropy: Prevents fingerprint correlation across sessions\n`,
+);
 
 // ── Statistical validation ───────────────────────────────────────────────────
 console.log("Statistical Validation:");
@@ -85,8 +81,11 @@ console.log("✅ Hamming distance: >12 bits ensures detection resistance\n");
 console.log("Integration Status:");
 console.log("🔄 TLS Bridge: Ready for full JA4 implementation");
 console.log("📊 GMM Calibration: Velocity models trained on synthetic traces");
-console.log("🎯 Entropy Targets: Mixture kurtosis >6.5, curvature entropy >4.2");
+console.log(
+  "🎯 Entropy Targets: Mixture kurtosis >6.5, curvature entropy >4.2",
+);
 console.log("🚀 Performance: +25–35% WAF effectiveness confirmed\n");
 
-console.log("🎉 Demo complete. Phase 4: Trace-Driven Behavioral Manifold ready!");
-```
+console.log(
+  "🎉 Demo complete. Phase 4: Trace-Driven Behavioral Manifold ready!",
+);
