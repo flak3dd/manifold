@@ -186,6 +186,7 @@
     let uaMobile = $state(false);
     let behaviorProfile = $state<BehaviorProfile>("normal");
     let aggression = $state(1); // 0-3 range for noise scaling
+    let tlsBridge = $state(false); // Enable TLS bridge for JA4 control
     let generatingFp = $state(false);
     let activePresetId = $state<string | null>(null);
 
@@ -249,6 +250,7 @@
         if (o.ua_mobile !== undefined) uaMobile = o.ua_mobile;
         if (o.webrtc_mode !== undefined)
             webrtcMode = o.webrtc_mode as typeof webrtcMode;
+        if (p.tls_bridge !== undefined) tlsBridge = p.tls_bridge;
         behaviorProfile = p.behavior_profile;
         aggression = 1; // Reset to default when applying presets
     }
@@ -308,7 +310,7 @@
             webrtcMode = profile.fingerprint.webrtc_mode;
             uaMobile = profile.fingerprint.ua_mobile;
             behaviorProfile = profile.human.profile;
-            aggression = profile.aggression ?? 1;
+            tlsBridge = profile.tls_bridge ?? false;
         } else {
             await regenerateFp();
         }
@@ -337,6 +339,11 @@
             timezone: selectedTz,
             screen_width: screenW,
             screen_height: screenH,
+        };
+
+        // Add TLS bridge flag to profile update
+        const profileUpdate = {
+            tls_bridge: tlsBridge,
         };
 
         // Apply aggression scaling to noise levels
@@ -388,14 +395,23 @@
                     target,
                 );
             }
-            // Set aggression on the saved profile for display
+            // Set aggression and tls_bridge on the saved profile for display
             saved.aggression = aggression;
+            saved.tls_bridge = tlsBridge;
             onSaved?.(saved);
             onClose();
         } catch (e) {
             errorMsg = String(e);
         } finally {
             saving = false;
+        }
+    }
+
+    function updateTlsBridge(value: boolean) {
+        tlsBridge = value;
+        // Auto-save if editing existing profile
+        if (mode === "edit" && profile) {
+            profileStore.updateProfile(profile.id, { tls_bridge: value });
         }
     }
 
@@ -1211,10 +1227,24 @@
                             bind:value={aggression}
                         />
                         <div class="slider-desc">
-                            Scales noise amplitudes: Off=0%, Low=50%,
-                            Medium=100%, High=200%
+                            <span class="toggle-desc">
+                                Scales noise amplitudes: Off=0%, Low=50%,
+                                Medium=100%, High=200%
+                            </span>
                         </div>
                     </div>
+
+                    <!-- TLS Bridge toggle -->
+                    <label class="toggle-row">
+                        <input type="checkbox" bind:checked={tlsBridge} />
+                        <span class="toggle-label"
+                            >TLS Bridge (JA4 Control)</span
+                        >
+                        <span class="toggle-desc">
+                            Enable custom TLS proxy for seed-controlled JA4
+                            fingerprinting. Higher entropy for Akamai/DataDome.
+                        </span>
+                    </label>
 
                     <!-- Hardware -->
                     <div class="row-2">

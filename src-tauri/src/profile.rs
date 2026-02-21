@@ -62,6 +62,8 @@ pub struct Profile {
     pub last_used: Option<DateTime<Utc>>,
     /// Absolute path to the Chromium user-data directory for this profile.
     pub data_dir: String,
+    /// Enable TLS bridge for JA4 fingerprinting control.
+    pub tls_bridge: Option<bool>,
 }
 
 /// Payload for creating a new profile.
@@ -86,6 +88,7 @@ pub struct UpdateProfileRequest {
     pub notes: Option<String>,
     pub tags: Option<Vec<String>>,
     pub behavior_profile: Option<String>,
+    pub tls_bridge: Option<bool>,
 }
 
 // ── Repository ────────────────────────────────────────────────────────────────
@@ -145,8 +148,8 @@ impl ProfileRepo {
             conn.execute(
                 r#"INSERT INTO profiles
                    (id, name, fingerprint_json, human_json, proxy_id,
-                    notes, tags, status, created_at, last_used)
-                   VALUES (?1,?2,?3,?4,?5,?6,?7,'idle',?8,NULL)"#,
+                    notes, tags, status, created_at, last_used, tls_bridge)
+                   VALUES (?1,?2,?3,?4,?5,?6,?7,'idle',?8,NULL,0)"#,
                 params![
                     id,
                     req.name,
@@ -173,6 +176,7 @@ impl ProfileRepo {
             created_at: now,
             last_used: None,
             data_dir: data_dir.to_string_lossy().into_owned(),
+            tls_bridge: Some(false),
         })
     }
 
@@ -184,7 +188,7 @@ impl ProfileRepo {
                 let row = conn
                     .query_row(
                         r#"SELECT id, name, fingerprint_json, human_json, proxy_id,
-                          notes, tags, status, created_at, last_used
+                          notes, tags, status, created_at, last_used, tls_bridge
                    FROM profiles WHERE id = ?1"#,
                         params![id],
                         row_to_profile,
@@ -204,7 +208,7 @@ impl ProfileRepo {
             .with_conn(|conn| {
                 let mut stmt = conn.prepare(
                     r#"SELECT id, name, fingerprint_json, human_json, proxy_id,
-                          notes, tags, status, created_at, last_used
+                          notes, tags, status, created_at, last_used, tls_bridge
                    FROM profiles
                    ORDER BY created_at DESC"#,
                 )?;
@@ -251,6 +255,7 @@ impl ProfileRepo {
         if let Some(tags) = req.tags {
             profile.tags = tags;
         }
+        // tls_bridge is handled via separate update endpoint
 
         let fp_json = serde_json::to_string(&profile.fingerprint)?;
         let human_json = serde_json::to_string(&profile.human)?;
@@ -856,6 +861,7 @@ fn row_to_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
     let status_str: String = row.get(7)?;
     let created_str: String = row.get(8)?;
     let last_str: Option<String> = row.get(9)?;
+    let tls_bridge: Option<i32> = row.get(10)?;
 
     let fingerprint: Fingerprint = serde_json::from_str(&fp_json).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(e))
@@ -891,5 +897,6 @@ fn row_to_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
         created_at,
         last_used,
         data_dir: String::new(), // filled by repo after construction
+        tls_bridge: tls_bridge.map(|v| v != 0),
     })
 }

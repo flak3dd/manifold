@@ -54,7 +54,7 @@ export const PLATFORM_PRESETS: PlatformPreset[] = [
     domains: ["tiktok.com", "tiktokv.com", "musical.ly", "tiktokcdn.com"],
     fp_hints: {
       canvas_noise: 0.12,
-      webgl_noise: 0.10,
+      webgl_noise: 0.1,
       audio_noise: 0.008,
       hardware_concurrency: 4,
       device_memory: 4,
@@ -78,7 +78,7 @@ export const PLATFORM_PRESETS: PlatformPreset[] = [
     label: "Instagram",
     domains: ["instagram.com", "instagr.am", "cdninstagram.com"],
     fp_hints: {
-      canvas_noise: 0.10,
+      canvas_noise: 0.1,
       webgl_noise: 0.08,
       audio_noise: 0.006,
       hardware_concurrency: 4,
@@ -122,7 +122,12 @@ export const PLATFORM_PRESETS: PlatformPreset[] = [
     },
     behavior_profile: "normal",
     suggested_geo: "US",
-    risk_signals: ["AWS WAF", "FingerprintJS Pro", "TLS-JA3", "Cookie integrity"],
+    risk_signals: [
+      "AWS WAF",
+      "FingerprintJS Pro",
+      "TLS-JA3",
+      "Cookie integrity",
+    ],
     snippet_ids: ["amazon-login", "amazon-add-to-cart", "amazon-checkout"],
     threat_level: "medium",
   },
@@ -302,7 +307,8 @@ export const QUICK_PRESETS: QuickPreset[] = [
     id: "shopify-safe",
     label: "Shopify safe",
     emoji: "🛒",
-    description: "Balanced noise, desktop Chrome, US geo. Passes Signifyd + hCaptcha.",
+    description:
+      "Balanced noise, desktop Chrome, US geo. Passes Signifyd + hCaptcha.",
     overrides: {
       canvas_noise: 0.04,
       webgl_noise: 0.04,
@@ -318,7 +324,8 @@ export const QUICK_PRESETS: QuickPreset[] = [
     id: "tiktok-aggressive",
     label: "TikTok aggressive",
     emoji: "🎵",
-    description: "High noise, mobile UA, WebRTC blocked. Defeats Arkose + TikTok Risk Engine.",
+    description:
+      "High noise, mobile UA, WebRTC blocked. Defeats Arkose + TikTok Risk Engine.",
     overrides: {
       canvas_noise: 0.13,
       webgl_noise: 0.11,
@@ -334,7 +341,8 @@ export const QUICK_PRESETS: QuickPreset[] = [
     id: "cloudflare-paranoid",
     label: "Cloudflare paranoid",
     emoji: "🛡️",
-    description: "Maximum noise on all surfaces, slow cautious behaviour. For CF Turnstile + Challenge pages.",
+    description:
+      "Maximum noise on all surfaces, slow cautious behaviour. For CF Turnstile + Challenge pages.",
     overrides: {
       canvas_noise: 0.15,
       webgl_noise: 0.13,
@@ -350,9 +358,10 @@ export const QUICK_PRESETS: QuickPreset[] = [
     id: "instagram-mobile",
     label: "Instagram mobile",
     emoji: "📸",
-    description: "Mobile UA + paranoid font subset + blocked WebRTC. Mimics iOS Chrome.",
+    description:
+      "Mobile UA + paranoid font subset + blocked WebRTC. Mimics iOS Chrome.",
     overrides: {
-      canvas_noise: 0.10,
+      canvas_noise: 0.1,
       webgl_noise: 0.08,
       audio_noise: 0.006,
       hardware_concurrency: 4,
@@ -366,7 +375,8 @@ export const QUICK_PRESETS: QuickPreset[] = [
     id: "blank-canvas",
     label: "Blank canvas",
     emoji: "⬜",
-    description: "Zero noise on all surfaces. Use only behind trusted residential proxies.",
+    description:
+      "Zero noise on all surfaces. Use only behind trusted residential proxies.",
     overrides: {
       canvas_noise: 0.0,
       webgl_noise: 0.0,
@@ -375,6 +385,24 @@ export const QUICK_PRESETS: QuickPreset[] = [
       webrtc_mode: "passthrough",
     },
     behavior_profile: "fast",
+  },
+  {
+    id: "ja4-paranoid",
+    label: "JA4-Paranoid",
+    emoji: "🔐",
+    description:
+      "TLS bridge enabled for seed-controlled JA4 fingerprints. Maximum entropy for Akamai/DataDome.",
+    overrides: {
+      canvas_noise: 0.12,
+      webgl_noise: 0.1,
+      audio_noise: 0.008,
+      hardware_concurrency: 8,
+      device_memory: 8,
+      ua_mobile: false,
+      webrtc_mode: "fake_mdns",
+    },
+    behavior_profile: "normal",
+    tls_bridge: true,
   },
 ];
 
@@ -386,7 +414,8 @@ export const AUTOMATION_SNIPPETS: AutomationSnippet[] = [
   {
     id: "shopify-login",
     name: "Shopify — Login",
-    description: "Navigate to the account login page, fill credentials, submit.",
+    description:
+      "Navigate to the account login page, fill credentials, submit.",
     platforms: ["shopify"],
     tags: ["login", "auth"],
     code: `// Shopify login flow
@@ -403,7 +432,8 @@ await page.waitForNavigation({ waitUntil: 'domcontentloaded' });`,
   {
     id: "shopify-add-to-cart",
     name: "Shopify — Add to Cart + Checkout (EU)",
-    description: "Find a product, add it to cart, begin checkout with EU address.",
+    description:
+      "Find a product, add it to cart, begin checkout with EU address.",
     platforms: ["shopify"],
     tags: ["checkout", "cart", "eu"],
     code: `// Shopify add-to-cart flow (EU)
@@ -495,7 +525,8 @@ if (save) { await human.click(save); }`,
   {
     id: "google-login",
     name: "Google — Login + 2FA",
-    description: "Navigate accounts.google.com, fill email then password, handle TOTP.",
+    description:
+      "Navigate accounts.google.com, fill email then password, handle TOTP.",
     platforms: ["google"],
     tags: ["login", "auth", "2fa", "totp"],
     code: `// Google login flow
@@ -534,7 +565,8 @@ await page.waitForSelector('#attachSiNAHCoreCXNewSideSheet_feature_div, #huc-v2-
 export function resolvePlatform(url: string): PlatformPreset | null {
   let hostname = url;
   try {
-    hostname = new URL(url.startsWith("http") ? url : `https://${url}`).hostname;
+    hostname = new URL(url.startsWith("http") ? url : `https://${url}`)
+      .hostname;
   } catch {
     // url is already a bare hostname
   }
@@ -571,16 +603,16 @@ export const TARGET_SUGGESTIONS: string[] = [
 
 /** Target tags available in the UI tag picker */
 export const TARGET_TAG_OPTIONS = [
-  { value: "login-heavy",        label: "Login heavy",         emoji: "🔐" },
-  { value: "checkout-flow",      label: "Checkout flow",       emoji: "💳" },
-  { value: "infinite-scroll",    label: "Infinite scroll",     emoji: "♾️" },
-  { value: "mfa-required",       label: "MFA required",        emoji: "📱" },
-  { value: "rate-limit-sensitive",label: "Rate limit sensitive",emoji: "⏱️" },
-  { value: "captcha-hcaptcha",   label: "hCaptcha",            emoji: "🤖" },
-  { value: "captcha-arkose",     label: "Arkose",              emoji: "🔒" },
-  { value: "captcha-recaptcha",  label: "reCAPTCHA",           emoji: "🔒" },
-  { value: "payment-form",       label: "Payment form",        emoji: "💰" },
-  { value: "age-verification",   label: "Age verification",    emoji: "🪪" },
+  { value: "login-heavy", label: "Login heavy", emoji: "🔐" },
+  { value: "checkout-flow", label: "Checkout flow", emoji: "💳" },
+  { value: "infinite-scroll", label: "Infinite scroll", emoji: "♾️" },
+  { value: "mfa-required", label: "MFA required", emoji: "📱" },
+  { value: "rate-limit-sensitive", label: "Rate limit sensitive", emoji: "⏱️" },
+  { value: "captcha-hcaptcha", label: "hCaptcha", emoji: "🤖" },
+  { value: "captcha-arkose", label: "Arkose", emoji: "🔒" },
+  { value: "captcha-recaptcha", label: "reCAPTCHA", emoji: "🔒" },
+  { value: "payment-form", label: "Payment form", emoji: "💰" },
+  { value: "age-verification", label: "Age verification", emoji: "🪪" },
 ] as const;
 
 /** Common screen presets for the Base tab */
@@ -590,30 +622,45 @@ export const SCREEN_PRESETS = [
   { label: "1440 × 900   16:10", w: 1440, h: 900 },
   { label: "1280 × 800   16:10", w: 1280, h: 800 },
   { label: "1366 × 768   ~16:9", w: 1366, h: 768 },
-  { label: "3840 × 2160  4K",   w: 3840, h: 2160 },
+  { label: "3840 × 2160  4K", w: 3840, h: 2160 },
   { label: "390 × 844    Mobile", w: 390, h: 844 },
   { label: "412 × 915    Mobile", w: 412, h: 915 },
 ] as const;
 
 /** OS / browser combinations with canonical UA seeds */
 export const OS_OPTIONS = [
-  { value: "windows11",  label: "Windows 11",      platform: "Win32",       ua_platform: "Windows" },
-  { value: "macos",      label: "macOS Ventura",   platform: "MacIntel",    ua_platform: "macOS"   },
-  { value: "android14",  label: "Android 14",      platform: "Linux armv8", ua_platform: "Android" },
+  {
+    value: "windows11",
+    label: "Windows 11",
+    platform: "Win32",
+    ua_platform: "Windows",
+  },
+  {
+    value: "macos",
+    label: "macOS Ventura",
+    platform: "MacIntel",
+    ua_platform: "macOS",
+  },
+  {
+    value: "android14",
+    label: "Android 14",
+    platform: "Linux armv8",
+    ua_platform: "Android",
+  },
 ] as const;
 
 export const BROWSER_OPTIONS = [
-  { value: "chrome132",  label: "Chrome 132"  },
+  { value: "chrome132", label: "Chrome 132" },
   { value: "firefox135", label: "Firefox 135" },
-  { value: "edge132",    label: "Edge 132"    },
+  { value: "edge132", label: "Edge 132" },
 ] as const;
 
 /** Related domain suggestions shown in Clone with variation → Switch target */
 export const RELATED_DOMAINS: Record<string, string[]> = {
-  "shopify.com":     ["shopify.com/login", "shop.app", "myshopify.com"],
-  "tiktok.com":      ["tiktok.com/foryou", "tiktok.com/live"],
-  "instagram.com":   ["instagram.com/explore", "instagram.com/reels"],
-  "google.com":      ["accounts.google.com", "myaccount.google.com"],
-  "amazon.com":      ["amazon.com/gp/cart", "amazon.com/gp/buy"],
-  "facebook.com":    ["facebook.com/login", "m.facebook.com"],
+  "shopify.com": ["shopify.com/login", "shop.app", "myshopify.com"],
+  "tiktok.com": ["tiktok.com/foryou", "tiktok.com/live"],
+  "instagram.com": ["instagram.com/explore", "instagram.com/reels"],
+  "google.com": ["accounts.google.com", "myaccount.google.com"],
+  "amazon.com": ["amazon.com/gp/cart", "amazon.com/gp/buy"],
+  "facebook.com": ["facebook.com/login", "m.facebook.com"],
 };

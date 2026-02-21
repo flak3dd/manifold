@@ -31,6 +31,8 @@ pub struct AppState {
     pub bridge_pid: Mutex<Option<u32>>,
     /// Port the bridge WebSocket server is listening on.
     pub bridge_port: Mutex<u16>,
+    /// Port for TLS bridge server (JA4 control).
+    pub tls_bridge_port: Mutex<u16>,
     /// Master key for AES-GCM field encryption (set once at startup).
     pub master_key: Option<String>,
 }
@@ -45,6 +47,7 @@ impl AppState {
             proxies: Mutex::new(proxies),
             bridge_pid: Mutex::new(None),
             bridge_port: Mutex::new(8766),
+            tls_bridge_port: Mutex::new(8767),
             master_key,
         }
     }
@@ -285,7 +288,7 @@ pub fn launch_profile(
     };
 
     // Serialise launch config to JSON for the bridge
-    let launch_config = serde_json::json!({
+    let mut launch_config = serde_json::json!({
         "profile": profile,
         "proxy":   proxy.as_ref().map(|p| serde_json::json!({
             "server":   p.to_playwright_server(),
@@ -296,10 +299,16 @@ pub fn launch_profile(
         "wsPort": *state.bridge_port.lock().unwrap(),
     });
 
+    // If TLS bridge is enabled, include the bridge port
+    if profile.tls_bridge.unwrap_or(false) {
+        let tls_bridge_port = *state.tls_bridge_port.lock().unwrap();
+        launch_config["tlsBridgePort"] = serde_json::json!(tls_bridge_port);
+    }
+
     let config_json = serde_json::to_string(&launch_config).map_err(|e| ManifoldError::Json(e))?;
 
     // Locate the bridge entry-point relative to the workspace
-    let workspace = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    let workspace = std::env::current_dir().unwrap_or_else(|| ".".into());
     let bridge_path = workspace.join("playwright-bridge").join("index.ts");
 
     if !bridge_path.exists() {
@@ -1082,6 +1091,27 @@ pub fn auto_correct_geo(
     profiles.update(&profile_id, req)?;
 
     Ok(result)
+}
+
+/// Launch TLS bridge server for JA4 fingerprinting control.
+/// Returns the port the bridge is listening on.
+#[tauri::command]
+pub async fn launch_tls_bridge(state: State<'_, AppState>, seed: u64) -> Result<u16> {
+    use crate::tls_bridge::TlsBridge;
+
+    let port = *state.tls_bridge_port.lock().unwrap();
+    let bridge = TlsBridge::new(port, seed)
+        .await
+        .map_err(|e| ManifoldError::Other(format!("Failed to start TLS bridge: {}", e)))?;
+
+    // Start the bridge in background (we don't wait for it)
+    tokio::spawn(async move {
+        if let Err(e) = bridge.run().await {
+            eprintln!("[tls-bridge] Bridge error: {}", e);
+        }
+    });
+
+    Ok(port)
 }
 
 // ── Unit Tests ────────────────────────────────────────────────────────────────

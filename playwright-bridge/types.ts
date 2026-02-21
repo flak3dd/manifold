@@ -135,6 +135,8 @@ export interface Profile {
   created_at: string;
   last_used: string | null;
   data_dir: string;
+  /** Enable TLS bridge for JA4 fingerprinting control */
+  tls_bridge?: boolean;
 }
 
 // ── Proxy ─────────────────────────────────────────────────────────────────────
@@ -154,6 +156,8 @@ export interface LaunchConfig {
   proxy: ProxyConfig | null;
   url: string;
   wsPort: number;
+  /** TLS bridge port when profile.tls_bridge is enabled */
+  tlsBridgePort?: number;
 }
 
 // ── WebSocket protocol ────────────────────────────────────────────────────────

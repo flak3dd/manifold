@@ -24,7 +24,7 @@ use crate::error::{ManifoldError, Result};
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 const SCHEMA_SQL: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS profiles (
     status           TEXT    NOT NULL DEFAULT 'idle',
     created_at       TEXT    NOT NULL,
     last_used        TEXT,
+    tls_bridge       INTEGER DEFAULT 0,     -- Enable TLS bridge for JA4 control (0=false, 1=true)
     FOREIGN KEY (proxy_id) REFERENCES proxies(id) ON DELETE SET NULL
 );
 
@@ -156,6 +157,14 @@ impl Db {
                 r.get(0)
             })
             .unwrap_or(0);
+
+        if current < 2 && SCHEMA_VERSION >= 2 {
+            // Migration 1→2: add tls_bridge column to profiles table
+            guard.conn.execute(
+                "ALTER TABLE profiles ADD COLUMN tls_bridge INTEGER DEFAULT 0",
+                [],
+            )?;
+        }
 
         if current < SCHEMA_VERSION {
             guard.conn.execute("DELETE FROM schema_version", [])?;

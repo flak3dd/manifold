@@ -8,6 +8,7 @@ mod geo_validator;
 mod human;
 mod profile;
 mod proxy;
+mod tls_bridge;
 
 use commands::AppState;
 use db::{default_db_path, Db};
@@ -57,6 +58,8 @@ pub fn run() {
             commands::stop_bridge,
             commands::get_bridge_url,
             commands::set_bridge_port,
+            // ── TLS Bridge ────────────────────────────────────────────────────
+            commands::launch_tls_bridge,
             // ── Emergency ─────────────────────────────────────────────────────
             commands::panic_shutdown,
             // ── Session export / replay ───────────────────────────────────────

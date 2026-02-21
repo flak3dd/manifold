@@ -185,6 +185,8 @@ export interface Profile {
   data_dir: string;
   /** Aggression level (0-3) for scaling noise amplitudes */
   aggression?: number;
+  /** Enable TLS bridge for JA4 fingerprinting control */
+  tls_bridge?: boolean;
   // Derived client-side (not persisted separately)
   target?: ProfileTarget;
 }

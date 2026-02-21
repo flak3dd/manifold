@@ -442,7 +442,17 @@ async function launchSession(cfg: LaunchConfig): Promise<BridgeSession> {
     },
   };
 
-  if (proxy) {
+  // ── Proxy configuration (direct or TLS bridge) ─────────────────────
+  if (cfg.profile.tls_bridge && cfg.tlsBridgePort) {
+    // Route through TLS bridge for JA4 control
+    contextOptions.proxy = {
+      server: `http://127.0.0.1:${cfg.tlsBridgePort}`,
+    };
+    console.info(
+      `[launch] Using TLS bridge on port ${cfg.tlsBridgePort} for JA4 control`,
+    );
+  } else if (proxy) {
+    // Direct proxy configuration
     contextOptions.proxy = {
       server: proxy.server,
       username: proxy.username,
@@ -461,7 +471,10 @@ async function launchSession(cfg: LaunchConfig): Promise<BridgeSession> {
   const page = await context.newPage();
 
   // ── Apply evasions ──────────────────────────────────────────────────────
-  await applyAllEvasions(page, evasionCfg);
+  await applyAllEvasions(page, evasionCfg, {
+    tlsBridgeEnabled: cfg.profile.tls_bridge,
+    tlsBridgePort: cfg.tlsBridgePort,
+  });
 
   // ── Additional anti-detection: intercept and handle automation markers ──
   page.on("response", (res) => {
