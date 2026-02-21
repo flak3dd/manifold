@@ -9,6 +9,9 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "test": "vitest",
+    "test:coverage": "vitest --coverage",
+    "test:watch": "vitest --watch",
     "tauri": "tauri",
     "scraper": "tsx scripts/scraper.ts",
     "bridge": "tsx playwright-bridge/index.ts",
@@ -50,6 +53,21 @@
     "vite": "^6.0.3",
     "vitest": "^2.1.9"
   },
-  "keywords": [],
-  "author": ""
+  "keywords": [
+    "browser-automation",
+    "fingerprinting",
+    "anti-detection",
+    "playwright",
+    "tauri",
+    "rust"
+  ],
+  "author": "Manifold Team",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/flak3dd/manifold.git"
+  },
+  "bugs": {
+    "url": "https://github.com/flak3dd/manifold/issues"
+  },
+  "homepage": "https://github.com/flak3dd/manifold#readme"
 }
