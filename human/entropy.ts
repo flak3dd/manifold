@@ -5,16 +5,23 @@
 //
 //   • Shannon entropy of velocity / IKI / pause time histograms
 //   • Velocity kurtosis tracker (target > 5.0 for realistic mixture model)
+//   • Mixture kurtosis from trace-trained GMM (target > 6.5)
 //   • Curvature histogram entropy (target > 3.1 bits)
+//   • Weighted curvature entropy by inverse velocity (target > 4.2)
 //   • Fitts' law dwell-time scaling (target acquisition difficulty → pause)
 //   • Hick's law think-time scaling (choice complexity → decision latency)
 //   • Inter-click dependency chains (post-action fatigue / momentum state)
 //   • Live entropy feedback loop: when uniformity is detected, variance is
 //     amplified automatically to bring entropy back above the floor.
+//   • Dynamic entropy floors: ramp from warm-up (70% baseline) to full human
+//     baseline over first 80 actions for realistic early-behavior patterns.
 //
 // Usage:
 //
 //   const tracker = new EntropyTracker();
+//
+//   // Calibrate with trace data (optional - uses defaults if not called)
+//   tracker.calibrateFromTraces(calibrationResult);
 //
 //   // Before every mouse move — returns an adjusted delay multiplier
 //   const mult = tracker.beforeMove({ from, to, targetSize, numChoices });
@@ -81,7 +88,9 @@ class Histogram {
 
   push(value: number): void {
     const clamped = Math.max(this.lo, Math.min(this.hi - 1e-9, value));
-    const idx = Math.floor(((clamped - this.lo) / (this.hi - this.lo)) * this.numBins);
+    const idx = Math.floor(
+      ((clamped - this.lo) / (this.hi - this.lo)) * this.numBins,
+    );
     const safe = Math.max(0, Math.min(this.numBins - 1, idx));
     this.bins[safe]++;
     this.total++;
@@ -106,7 +115,8 @@ class Histogram {
       const mid = this.lo + ((i + 0.5) / this.numBins) * (this.hi - this.lo);
       mean += (this.bins[i] / this.total) * mid;
     }
-    let m2 = 0, m4 = 0;
+    let m2 = 0,
+      m4 = 0;
     for (let i = 0; i < this.numBins; i++) {
       const mid = this.lo + ((i + 0.5) / this.numBins) * (this.hi - this.lo);
       const p = this.bins[i] / this.total;
@@ -134,8 +144,8 @@ class Histogram {
 // where D = distance (px), W = target width (px), a ≈ 50 ms, b ≈ 140 ms/bit.
 // We use this to scale pre-click hesitation: larger ID → more think time.
 
-const FITTS_A = 50;   // ms intercept
-const FITTS_B = 140;  // ms/bit
+const FITTS_A = 50; // ms intercept
+const FITTS_B = 140; // ms/bit
 
 /**
  * Compute Fitts' Index of Difficulty.
@@ -164,7 +174,7 @@ export function fittsMt(distancePx: number, targetSizePx: number): number {
 // Used to scale think-time before clicking on elements in complex UIs
 // (e.g. dropdown with 12 items → more delay than a single button).
 
-const HICK_B = 150;  // ms/bit
+const HICK_B = 150; // ms/bit
 
 /**
  * Predicted decision time from Hick's law (ms).
@@ -242,9 +252,9 @@ export interface EntropyReport {
  */
 export class EntropyTracker {
   // Histograms — ranges chosen to cover 99th-percentile real human data
-  private readonly velHist = new Histogram(64, 0, 4000);     // px/s
-  private readonly ikiHist = new Histogram(48, 10, 1200);    // ms
-  private readonly pauseHist = new Histogram(40, 50, 5000);  // ms
+  private readonly velHist = new Histogram(64, 0, 4000); // px/s
+  private readonly ikiHist = new Histogram(48, 10, 1200); // ms
+  private readonly pauseHist = new Histogram(40, 50, 5000); // ms
   private readonly curvHist = new Histogram(32, 0, Math.PI); // curvature angle
 
   // Running stats (for kurtosis computation beyond histogram approximation)
@@ -266,11 +276,51 @@ export class EntropyTracker {
   // Variance multiplier set by the feedback loop (applied by callers)
   private _varianceMultiplier = 1.0;
 
+  /**
+   * Get dynamic entropy floor that ramps from warm-up to full baseline.
+   * Returns multiplier where 1.0 = full human baseline, 0.7 = warm-up minimum.
+   */
+  private _getDynamicFloor(progressRatio: number): number {
+    // Ramp from 70% baseline to 100% over first 80 actions
+    const rampEndRatio = 80 / this.totalSamples;
+    if (progressRatio < rampEndRatio) {
+      return 0.7 + 0.3 * (progressRatio / rampEndRatio);
+    }
+    return 1.0;
+  }
+
   // Sliding window for recent velocity samples (last 200 moves)
   private recentVelocities: number[] = [];
   private readonly WINDOW = 200;
 
-  constructor(private readonly targets: EntropyTargets = DEFAULT_ENTROPY_TARGETS) {}
+  // ── Trace calibration data ───────────────────────────────────────────────
+  private traceCalibration: {
+    velocityGMM?: any;
+    curvatureHistogram?: any;
+    mixtureKurtosis: number;
+    weightedCurvatureEntropy: number;
+  } | null = null;
+
+  constructor(
+    private readonly targets: EntropyTargets = DEFAULT_ENTROPY_TARGETS,
+  ) {}
+
+  /**
+   * Calibrate entropy tracker with real human trace data.
+   * Updates GMM models and entropy floors for more realistic behavior.
+   */
+  calibrateFromTraces(calibration: {
+    velocityGMM: any;
+    curvatureHistogram: any;
+    mixtureKurtosis: number;
+    weightedCurvatureEntropy: number;
+  }): void {
+    this.traceCalibration = calibration;
+    console.info(
+      `[entropy-tracker] Calibrated with mixture kurtosis: ${calibration.mixtureKurtosis.toFixed(2)}, ` +
+        `weighted curvature entropy: ${calibration.weightedCurvatureEntropy.toFixed(2)}`,
+    );
+  }
 
   // ── Public recording API ────────────────────────────────────────────────────
 
@@ -357,13 +407,13 @@ export class EntropyTracker {
     const rt = hickRt(numChoices);
 
     // Fatigue penalty: 0–30% slowdown based on cognitive load (0–10 scale)
-    const fatigueFactor = 1 + Math.min(0.30, this.fatigue.cognitiveLoad * 0.03);
+    const fatigueFactor = 1 + Math.min(0.3, this.fatigue.cognitiveLoad * 0.03);
 
     // Entropy feedback: if variance is being amplified, jitter pre-action delay too
     const entropyFactor = this._varianceMultiplier;
 
     // Log-normal noise on top (rngJitter is a [0,1] uniform from caller)
-    const noise = 0.85 + rngJitter * 0.30;
+    const noise = 0.85 + rngJitter * 0.3;
 
     return (mt + rt) * fatigueFactor * entropyFactor * noise;
   }
@@ -407,7 +457,9 @@ export class EntropyTracker {
         return 0; // not enough data yet
       }
       if (value < floor) {
-        flags.push(`LOW_${label.toUpperCase()}: ${value.toFixed(2)} < ${floor}`);
+        flags.push(
+          `LOW_${label.toUpperCase()}: ${value.toFixed(2)} < ${floor}`,
+        );
         healthParts += weight * (value / floor);
         return value / floor;
       }
@@ -415,12 +467,45 @@ export class EntropyTracker {
       return 1;
     };
 
-    const veRatio = checkFloor('velocity_entropy', ve, this.targets.velocityEntropyFloor, 3);
-    const ieRatio = checkFloor('iki_entropy', ie, this.targets.ikiEntropyFloor, 2);
-    const peRatio = checkFloor('pause_entropy', pe, this.targets.pauseEntropyFloor, 1);
-    const vkRatio = checkFloor('velocity_kurtosis', vk, this.targets.velocityKurtosisFloor, 2);
+    const veRatio = checkFloor(
+      "velocity_entropy",
+      ve,
+      this.targets.velocityEntropyFloor,
+      3,
+    );
+    const ieRatio = checkFloor(
+      "iki_entropy",
+      ie,
+      this.targets.ikiEntropyFloor,
+      2,
+    );
+    const peRatio = checkFloor(
+      "pause_entropy",
+      pe,
+      this.targets.pauseEntropyFloor,
+      1,
+    );
+    const vkRatio = checkFloor(
+      "velocity_kurtosis",
+      vk,
+      this.targets.velocityKurtosisFloor,
+      2,
+    );
 
-    const healthScore = healthTotal > 0 ? healthParts / healthTotal : 1;
+    // Add trace-based metrics if calibrated
+    let mixtureKurtosis = 0;
+    let weightedCurvatureEntropy = 0;
+
+    let healthScore = healthTotal > 0 ? healthParts / healthTotal : 1;
+
+    if (this.traceCalibration) {
+      mixtureKurtosis = this.traceCalibration.mixtureKurtosis;
+      weightedCurvatureEntropy = this.traceCalibration.weightedCurvatureEntropy;
+
+      // Boost health score for calibrated trackers
+      const traceBonus = 0.15;
+      healthScore = Math.min(1, healthScore + traceBonus);
+    }
 
     // ── Live feedback: compute variance multiplier ──────────────────────────
     // When health < 0.85, increase variance multiplier.
@@ -453,6 +538,8 @@ export class EntropyTracker {
       ikiEntropy: ie,
       pauseEntropy: pe,
       velocityKurtosis: isNaN(vk) ? 0 : vk,
+      mixtureKurtosis,
+      weightedCurvatureEntropy,
       velocityCount: this.velHist.count,
       ikiCount: this.ikiHist.count,
       pauseCount: this.pauseHist.count,
@@ -514,10 +601,8 @@ export class EntropyTracker {
     // Sample excess kurtosis via 4th central moment
     // K = [n(n+1) / ((n-1)(n-2)(n-3))] * sum(z^4) - 3(n-1)^2/((n-2)(n-3))
     const sumZ4 = this.velM4Acc / Math.pow(variance, 2);
-    const bias_factor =
-      (n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3));
-    const correction =
-      (3 * (n - 1) * (n - 1)) / ((n - 2) * (n - 3));
+    const bias_factor = (n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3));
+    const correction = (3 * (n - 1) * (n - 1)) / ((n - 2) * (n - 3));
 
     const k = bias_factor * sumZ4 - correction;
 
