@@ -383,16 +383,21 @@ async function detectSoftSignals(page: Page, config: LoginRunConfig): Promise<Ro
 function applyDomainNoise(
   fp: Fingerprint,
   domainProfile: DomainProfile,
-  humanCfg: HumanBehavior
+  humanCfg: HumanBehavior,
+  aggressionFactor = 1.0,
 ): { fp: Fingerprint; human: HumanBehavior } {
+  // Noise floor is max(profile noise, domain recommended noise) × aggressionFactor.
+  // Clamped to [0, 1] to avoid breaking CAPTCHA solvers.
+  const clampNoise = (v: number) => Math.min(1.0, v);
+
   const newFp: Fingerprint = {
     ...fp,
-    canvas_noise: Math.max(fp.canvas_noise, domainProfile.canvas_noise),
-    webgl_noise:  Math.max(fp.webgl_noise,  domainProfile.webgl_noise),
-    audio_noise:  Math.max(fp.audio_noise,  domainProfile.audio_noise),
+    canvas_noise: clampNoise(Math.max(fp.canvas_noise, domainProfile.canvas_noise) * aggressionFactor),
+    webgl_noise:  clampNoise(Math.max(fp.webgl_noise,  domainProfile.webgl_noise)  * aggressionFactor),
+    audio_noise:  clampNoise(Math.max(fp.audio_noise,  domainProfile.audio_noise)  * aggressionFactor),
     // Font subset — escalate only (full → reduced → paranoid)
     font_subset:
-      domainProfile.font_subset === "paranoid" ? []            // use empty array = paranoid
+      domainProfile.font_subset === "paranoid" ? []
       : domainProfile.font_subset === "reduced" && fp.font_subset.length > 20
         ? fp.font_subset.slice(0, 20)
         : fp.font_subset,
@@ -405,16 +410,26 @@ function applyDomainNoise(
       : fp.device_memory,
   };
 
+  // Behavioral slowdown scales inversely with aggression:
+  // higher aggression → slower, more cautious mouse + typing.
+  const behaviorSlowdown = 1.0 / Math.max(1.0, Math.sqrt(aggressionFactor));
+
   const newHuman: HumanBehavior = {
     ...humanCfg,
     mouse: {
       ...humanCfg.mouse,
       base_speed_px_per_sec:
-        humanCfg.mouse.base_speed_px_per_sec * domainProfile.mouse_speed_factor,
+        humanCfg.mouse.base_speed_px_per_sec * domainProfile.mouse_speed_factor * behaviorSlowdown,
+      curve_scatter: Math.min(
+        2.0,
+        humanCfg.mouse.curve_scatter * (1.0 + (aggressionFactor - 1.0) * 0.4),
+      ),
     },
     typing: {
       ...humanCfg.typing,
-      base_wpm: humanCfg.typing.base_wpm * domainProfile.typing_speed_factor,
+      base_wpm: humanCfg.typing.base_wpm * domainProfile.typing_speed_factor * behaviorSlowdown,
+      // Scale up typo rate slightly with aggression (more "nervous" typing)
+      typo_rate: Math.min(0.12, humanCfg.typing.typo_rate * (1.0 + (aggressionFactor - 1.0) * 0.2)),
     },
   };
 
@@ -849,12 +864,122 @@ async function performLoginAttempt(
 
 type BroadcastFn = (msg: LoginServerMsg) => void;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Geo-consistency: constrain locale / timezone / screen to proxy country
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Patch a fingerprint's locale, accept_language, and timezone to be
+ * consistent with the given ISO-3166-1 alpha-2 country code.
+ * Also geo-gates 4K screen resolutions to markets where 4K penetration
+ * is realistic (US, JP, KR, DE, GB, AU, CA).
+ *
+ * Mirror of the Rust `FingerprintOrchestrator::enforce_geo()` logic so
+ * that the Node.js runner can apply it without an IPC round-trip.
+ */
+function enforceGeoConsistency(
+  fp: Fingerprint,
+  country: string,
+  seed: number,
+): Fingerprint {
+  const cc = country.toUpperCase();
+
+  // Deterministic sub-RNG seeded from profile seed XOR a geo salt
+  let s = (seed ^ 0x9e0c0de) >>> 0;
+  const rng = () => {
+    s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+    return (s >>> 0) / 0x100000000;
+  };
+
+  type GeoLocale = [string, string, string]; // [locale, accept-language, timezone]
+  const GEO: Record<string, GeoLocale[]> = {
+    US: [
+      ["en-US", "en-US,en;q=0.9", "America/New_York"],
+      ["en-US", "en-US,en;q=0.9", "America/Chicago"],
+      ["en-US", "en-US,en;q=0.9", "America/Los_Angeles"],
+      ["en-US", "en-US,en;q=0.9", "America/Denver"],
+    ],
+    GB: [["en-GB", "en-GB,en;q=0.9", "Europe/London"]],
+    CA: [
+      ["en-CA", "en-CA,en;q=0.9,fr-CA;q=0.8", "America/Toronto"],
+      ["en-CA", "en-CA,en;q=0.9", "America/Vancouver"],
+      ["fr-CA", "fr-CA,fr;q=0.9,en-CA;q=0.8", "America/Montreal"],
+    ],
+    AU: [
+      ["en-AU", "en-AU,en;q=0.9", "Australia/Sydney"],
+      ["en-AU", "en-AU,en;q=0.9", "Australia/Melbourne"],
+    ],
+    DE: [["de-DE", "de-DE,de;q=0.9,en;q=0.8", "Europe/Berlin"]],
+    FR: [["fr-FR", "fr-FR,fr;q=0.9,en;q=0.8", "Europe/Paris"]],
+    ES: [["es-ES", "es-ES,es;q=0.9,en;q=0.8", "Europe/Madrid"]],
+    IT: [["it-IT", "it-IT,it;q=0.9,en;q=0.8", "Europe/Rome"]],
+    NL: [["nl-NL", "nl-NL,nl;q=0.9,en;q=0.8", "Europe/Amsterdam"]],
+    PL: [["pl-PL", "pl-PL,pl;q=0.9,en;q=0.8", "Europe/Warsaw"]],
+    BR: [
+      ["pt-BR", "pt-BR,pt;q=0.9,en;q=0.8", "America/Sao_Paulo"],
+      ["pt-BR", "pt-BR,pt;q=0.9,en;q=0.8", "America/Fortaleza"],
+    ],
+    JP: [["ja-JP", "ja-JP,ja;q=0.9,en;q=0.8", "Asia/Tokyo"]],
+    KR: [["ko-KR", "ko-KR,ko;q=0.9,en;q=0.8", "Asia/Seoul"]],
+    IN: [["en-IN", "en-IN,en;q=0.9,hi;q=0.8", "Asia/Kolkata"]],
+    SG: [["en-SG", "en-SG,en;q=0.9", "Asia/Singapore"]],
+    HK: [["zh-HK", "zh-HK,zh;q=0.9,en;q=0.8", "Asia/Hong_Kong"]],
+    SE: [["sv-SE", "sv-SE,sv;q=0.9,en;q=0.8", "Europe/Stockholm"]],
+    NO: [["nb-NO", "nb-NO,nb;q=0.9,en;q=0.8", "Europe/Oslo"]],
+    CH: [
+      ["de-CH", "de-CH,de;q=0.9,en;q=0.8", "Europe/Zurich"],
+      ["fr-CH", "fr-CH,fr;q=0.9,de-CH;q=0.8", "Europe/Zurich"],
+    ],
+    MX: [["es-MX", "es-MX,es;q=0.9,en;q=0.8", "America/Mexico_City"]],
+  };
+
+  const options = GEO[cc];
+  if (!options) return fp; // unknown country — leave untouched
+
+  const [locale, acceptLanguage, timezone] = options[Math.floor(rng() * options.length)];
+
+  // 4K screen geo-gate: only realistic in high-income / tech markets
+  const allow4K = ["US","JP","KR","DE","GB","AU","CA","SE","NO","CH"].includes(cc);
+  let { screen_width, screen_height, viewport_width, viewport_height, pixel_ratio } = fp;
+  if (!allow4K && screen_width >= 3840) {
+    screen_width   = 1920;
+    screen_height  = 1080;
+    viewport_width = 1920;
+    viewport_height = Math.max(600, 1080 - 88 - 40 - Math.floor(rng() * 20));
+    pixel_ratio     = rng() < 0.3 ? 1.25 : 1.0;
+  }
+
+  return {
+    ...fp,
+    locale,
+    accept_language: acceptLanguage,
+    timezone,
+    screen_width,
+    screen_height,
+    viewport_width,
+    viewport_height,
+    pixel_ratio,
+  };
+}
+
 export class LoginRunner {
   private _run: LoginRun | null = null;
   private _paused = false;
   private _aborted = false;
   private _softSignalCounts: Map<string, number> = new Map();
   private _consecutiveFailures = 0;
+
+  // ── Adaptive WAF aggression closed-loop ───────────────────────────────────
+  // Starts at 1.0 (baseline noise).  Each WAF signal multiplies by 1.4×
+  // (capped at 4.0).  Three consecutive clean attempts decay by 0.85×
+  // back toward 1.0.  Applied as a multiplier to canvas/webgl/audio noise
+  // and mouse/typing speed on every _attemptCredential call.
+  private _aggressionFactor = 1.0;
+  private _cleanStreak = 0;
+  private readonly _AGGRESSION_ESCALATE = 1.4;
+  private readonly _AGGRESSION_DECAY    = 0.85;
+  private readonly _AGGRESSION_MAX      = 4.0;
+  private readonly _CLEAN_STREAK_DECAY  = 3;   // clean attempts before decay tick
 
   constructor(
     private readonly profiles: Profile[],
@@ -870,6 +995,8 @@ export class LoginRunner {
     this._aborted = false;
     this._softSignalCounts.clear();
     this._consecutiveFailures = 0;
+    this._aggressionFactor = 1.0;
+    this._cleanStreak = 0;
 
     run.status = "running";
     run.started_at = now();
@@ -978,6 +1105,61 @@ export class LoginRunner {
 
   // ── Single credential attempt ─────────────────────────────────────────────
 
+  // ── Aggression state machine ───────────────────────────────────────────────
+
+  /**
+   * Call after each attempt with the signals detected.
+   * WAF signals escalate aggressionFactor × 1.4 (cap 4.0).
+   * Three consecutive clean attempts decay × 0.85 toward 1.0.
+   * Broadcasts a log_rotation event when the factor changes significantly.
+   */
+  private _updateAggression(run: LoginRun, signals: string[]): void {
+    const WAF_SIGNALS = new Set([
+      "captcha_detected", "waf_challenge", "rate_limit_429",
+      "rate_limit_response", "ip_block_signal", "redirect_to_verify",
+    ]);
+
+    const hadWafSignal = signals.some(s => WAF_SIGNALS.has(s));
+    const prevFactor = this._aggressionFactor;
+
+    if (hadWafSignal) {
+      this._aggressionFactor = Math.min(
+        this._AGGRESSION_MAX,
+        this._aggressionFactor * this._AGGRESSION_ESCALATE,
+      );
+      this._cleanStreak = 0;
+    } else {
+      this._cleanStreak++;
+      if (this._cleanStreak >= this._CLEAN_STREAK_DECAY) {
+        this._aggressionFactor = Math.max(
+          1.0,
+          this._aggressionFactor * this._AGGRESSION_DECAY,
+        );
+        this._cleanStreak = 0;
+      }
+    }
+
+    // Log significant changes (>5% shift) to the rotation log as metadata
+    const delta = Math.abs(this._aggressionFactor - prevFactor);
+    if (delta > prevFactor * 0.05 && run) {
+      const direction = this._aggressionFactor > prevFactor ? "↑" : "↓";
+      this.broadcast({
+        type: "login_rotation",
+        run_id: run.id,
+        event: {
+          ts: Date.now(),
+          trigger: hadWafSignal ? "waf_challenge" : "consecutive_failures",
+          credential_id: null,
+          old_profile_id: "",
+          new_profile_id: "",
+          old_proxy_id: null,
+          new_proxy_id: null,
+          details: `WAF aggression ${direction} ${prevFactor.toFixed(2)}→${this._aggressionFactor.toFixed(2)} (signals: ${signals.join(", ") || "none"})`,
+        } satisfies import("./login-types.js").RotationEvent,
+      });
+    }
+  }
+
   private async _attemptCredential(
     run: LoginRun,
     credential: CredentialPair,
@@ -1001,11 +1183,13 @@ export class LoginRunner {
       if (rotated) profile = rotated;
     }
 
-    // Apply domain-aware noise overrides to profile copy
+    // Apply domain-aware noise overrides to profile copy,
+    // scaled by the current adaptive aggression factor.
     const { fp: adjustedFp, human: adjustedHuman } = applyDomainNoise(
       profile.fingerprint,
       dp,
-      profile.human
+      profile.human,
+      this._aggressionFactor,
     );
     const adjustedProfile: Profile = {
       ...profile,
@@ -1015,6 +1199,22 @@ export class LoginRunner {
 
     // Resolve proxy
     const proxy = this._resolveProxy(profile);
+
+    // ── Geo-consistency enforcement ───────────────────────────────────────────
+    // If the selected proxy has a known country code, patch the fingerprint
+    // locale / timezone / screen resolution to match.  This prevents the most
+    // common 2026 consistency-violation signal: proxy in US, timezone=Asia/Tokyo.
+    if (proxy) {
+      const proxyRecord = this.proxies.find(p => p.server === proxy.server);
+      const country = (proxyRecord as any)?.country as string | undefined;
+      if (country) {
+        adjustedProfile.fingerprint = enforceGeoConsistency(
+          adjustedProfile.fingerprint,
+          country,
+          profile.fingerprint.seed,
+        );
+      }
+    }
 
     // Broadcast attempt start
     credential.status = "running";
@@ -1047,6 +1247,11 @@ export class LoginRunner {
         page, context, human, credential, config, dp, credSeed
       );
 
+      // ── Adaptive aggression update ────────────────────────────────────────
+      // Must run before rotation logic so the next attempt inherits the new
+      // noise level immediately (closed-loop: WAF signal → escalate → next try).
+      this._updateAggression(run, result.signals);
+
       // Record per-attempt signals for rotation threshold
       for (const sig of result.signals) {
         const count = (this._softSignalCounts.get(sig) ?? 0) + 1;
@@ -1065,7 +1270,7 @@ export class LoginRunner {
               new_profile_id: rotated.id,
               old_proxy_id: proxy?.server ?? null,
               new_proxy_id: this._resolveProxy(rotated)?.server ?? null,
-              details: `Soft signal threshold exceeded (${count}× ${sig})`,
+              details: `Soft signal threshold exceeded (${count}× ${sig}), aggression=${this._aggressionFactor.toFixed(2)}`,
             };
             rotationEvents.push(evt);
             run.rotation_log.push(evt);
@@ -1089,7 +1294,7 @@ export class LoginRunner {
               new_profile_id: rotated.id,
               old_proxy_id: proxy?.server ?? null,
               new_proxy_id: this._resolveProxy(rotated)?.server ?? null,
-              details: `${this._consecutiveFailures} consecutive failures`,
+              details: `${this._consecutiveFailures} consecutive failures, aggression=${this._aggressionFactor.toFixed(2)}`,
             };
             rotationEvents.push(evt);
             run.rotation_log.push(evt);

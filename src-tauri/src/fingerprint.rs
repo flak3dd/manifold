@@ -440,10 +440,100 @@ impl FingerprintOrchestrator {
     }
 
     fn generate_mdns_hostname(rng: &mut SmallRng) -> String {
-        // RFC 7675 mDNS-style hostname: 8 hex chars + ".local"
+        // Chrome generates mDNS hostnames as UUID v4 (RFC 4122 §4.4) + ".local"
+        // Format: xxxxxxxx-xxxx-4xxx-[89ab]xxx-xxxxxxxxxxxx.local
+        // The plain 16-hex format is a known synthetic signal in 2026 WAF models.
         let a: u32 = rng.gen();
         let b: u32 = rng.gen();
-        format!("{a:08x}{b:08x}.local")
+        let c: u32 = rng.gen();
+        let d: u32 = rng.gen();
+
+        // Encode as 128-bit value in UUID v4 layout
+        let b0 = a;
+        let b1 = (b & 0xffff0fff) | 0x00004000; // version = 4
+        let b2 = (c & 0x3fffffff) | 0x80000000; // variant = 10xx
+        let b3 = d;
+
+        format!(
+            "{:08x}-{:04x}-{:04x}-{:04x}-{:04x}{:08x}.local",
+            b0,
+            (b1 >> 16) & 0xffff,
+            b1 & 0xffff,
+            (b2 >> 16) & 0xffff,
+            b2 & 0xffff,
+            b3,
+        )
+    }
+
+    /// Constrain locale, accept_language, timezone, and screen resolution
+    /// to be internally consistent with the given ISO-3166-1 alpha-2 country code.
+    /// Call this after `generate()` when a proxy country is known.
+    pub fn enforce_geo(fp: &mut Fingerprint, country_code: &str) {
+        let cc = country_code.to_uppercase();
+        let mut rng = SmallRng::seed_from_u64(fp.seed ^ 0x9e0c_0de0_u64);
+
+        // GEO_LOCALE_MAP: country → [(locale, accept_language, timezone)]
+        let options: &[(&str, &str, &str)] = match cc.as_str() {
+            "US" => &[
+                ("en-US", "en-US,en;q=0.9", "America/New_York"),
+                ("en-US", "en-US,en;q=0.9", "America/Chicago"),
+                ("en-US", "en-US,en;q=0.9", "America/Los_Angeles"),
+                ("en-US", "en-US,en;q=0.9", "America/Denver"),
+            ],
+            "GB" => &[("en-GB", "en-GB,en;q=0.9", "Europe/London")],
+            "CA" => &[
+                ("en-CA", "en-CA,en;q=0.9,fr-CA;q=0.8", "America/Toronto"),
+                ("en-CA", "en-CA,en;q=0.9", "America/Vancouver"),
+                ("fr-CA", "fr-CA,fr;q=0.9,en-CA;q=0.8", "America/Montreal"),
+            ],
+            "AU" => &[
+                ("en-AU", "en-AU,en;q=0.9", "Australia/Sydney"),
+                ("en-AU", "en-AU,en;q=0.9", "Australia/Melbourne"),
+                ("en-AU", "en-AU,en;q=0.9", "Australia/Brisbane"),
+            ],
+            "DE" => &[("de-DE", "de-DE,de;q=0.9,en;q=0.8", "Europe/Berlin")],
+            "FR" => &[("fr-FR", "fr-FR,fr;q=0.9,en;q=0.8", "Europe/Paris")],
+            "ES" => &[("es-ES", "es-ES,es;q=0.9,en;q=0.8", "Europe/Madrid")],
+            "IT" => &[("it-IT", "it-IT,it;q=0.9,en;q=0.8", "Europe/Rome")],
+            "NL" => &[("nl-NL", "nl-NL,nl;q=0.9,en;q=0.8", "Europe/Amsterdam")],
+            "PL" => &[("pl-PL", "pl-PL,pl;q=0.9,en;q=0.8", "Europe/Warsaw")],
+            "BR" => &[
+                ("pt-BR", "pt-BR,pt;q=0.9,en;q=0.8", "America/Sao_Paulo"),
+                ("pt-BR", "pt-BR,pt;q=0.9,en;q=0.8", "America/Fortaleza"),
+            ],
+            "JP" => &[("ja-JP", "ja-JP,ja;q=0.9,en;q=0.8", "Asia/Tokyo")],
+            "KR" => &[("ko-KR", "ko-KR,ko;q=0.9,en;q=0.8", "Asia/Seoul")],
+            "IN" => &[("en-IN", "en-IN,en;q=0.9,hi;q=0.8", "Asia/Kolkata")],
+            "SG" => &[("en-SG", "en-SG,en;q=0.9", "Asia/Singapore")],
+            "HK" => &[("zh-HK", "zh-HK,zh;q=0.9,en;q=0.8", "Asia/Hong_Kong")],
+            "SE" => &[("sv-SE", "sv-SE,sv;q=0.9,en;q=0.8", "Europe/Stockholm")],
+            "NO" => &[("nb-NO", "nb-NO,nb;q=0.9,en;q=0.8", "Europe/Oslo")],
+            "CH" => &[
+                ("de-CH", "de-CH,de;q=0.9,en;q=0.8", "Europe/Zurich"),
+                ("fr-CH", "fr-CH,fr;q=0.9,de-CH;q=0.8", "Europe/Zurich"),
+            ],
+            "MX" => &[("es-MX", "es-MX,es;q=0.9,en;q=0.8", "America/Mexico_City")],
+            // Fallback: keep existing locale unchanged
+            _ => return,
+        };
+
+        let idx = rng.gen_range(0..options.len());
+        let (locale, accept_language, timezone) = options[idx];
+        fp.locale = locale.to_string();
+        fp.accept_language = accept_language.to_string();
+        fp.timezone = timezone.to_string();
+
+        // Screen resolution: geo-gate 4K to locales where 4K desktop penetration
+        // is realistic (US, JP, KR, DE, GB).  For other regions, cap at 1080p.
+        let allow_4k = matches!(cc.as_str(), "US" | "JP" | "KR" | "DE" | "GB" | "AU" | "CA");
+        if !allow_4k && fp.screen_width >= 3840 {
+            // Downscale to 1920×1080 with viewport recalc
+            fp.screen_width = 1920;
+            fp.screen_height = 1080;
+            fp.viewport_width = 1920;
+            fp.viewport_height = 1080u32.saturating_sub(88 + 40 + rng.gen_range(0u32..20));
+            fp.pixel_ratio = if rng.gen_bool(0.3) { 1.25 } else { 1.0 };
+        }
     }
 
     fn generate_fake_local_ip(rng: &mut SmallRng) -> String {
