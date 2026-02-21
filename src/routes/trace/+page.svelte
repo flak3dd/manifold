@@ -263,23 +263,27 @@
             tracesImported = 0;
 
             // Import traces using the trace importer
-            const { importTraceDataset } = await import("../../human/trace/importer.js");
+            const { importTraceDataset } =
+                await import("../../human/trace/importer.js");
             const datasetMap = {
-                'attentive-cursor': 'https://example.com/attentive-cursor-dataset.json', // Placeholder URLs
-                'behacom': 'https://example.com/behacom-dataset.xml',
-                'sapimouse': 'https://example.com/sapimouse-dataset.csv'
+                "attentive-cursor":
+                    "https://example.com/attentive-cursor-dataset.json", // Placeholder URLs
+                behacom: "https://example.com/behacom-dataset.xml",
+                sapimouse: "https://example.com/sapimouse-dataset.csv",
             };
 
             const url = datasetMap[selectedDataset as keyof typeof datasetMap];
             if (!url) {
-                throw new Error(`No URL configured for dataset: ${selectedDataset}`);
+                throw new Error(
+                    `No URL configured for dataset: ${selectedDataset}`,
+                );
             }
 
             // For demo purposes, use synthetic data
             const traces = await importTraceDataset(url, {
                 format: selectedDataset as any,
                 minDistance: 10,
-                maxVelocity: 5000
+                maxVelocity: 5000,
             });
 
             tracesImported = traces.length;
@@ -290,18 +294,17 @@
                 details: [
                     `Total segments: ${traces.length}`,
                     `Average segment length: ${Math.round(traces.reduce((sum, t) => sum + t.x.length, 0) / traces.length)} samples`,
-                    `Velocity range: ${Math.min(...traces.flatMap(t => t.velocity))} - ${Math.max(...traces.flatMap(t => t.velocity))} px/s`
-                ]
+                    `Velocity range: ${Math.min(...traces.flatMap((t) => t.velocity))} - ${Math.max(...traces.flatMap((t) => t.velocity))} px/s`,
+                ],
             };
 
             toast.success(`Imported ${traces.length} trace segments`);
-
         } catch (error) {
             importStatus = {
                 success: false,
                 title: "Import Failed",
                 message: error instanceof Error ? error.message : String(error),
-                details: ["Check dataset URL and network connectivity"]
+                details: ["Check dataset URL and network connectivity"],
             };
             toast.error(`Trace import failed: ${error}`);
         }
@@ -317,15 +320,29 @@
 
         try {
             // Import calibrator and apply to synthetic trace data
-            const { calibrateFromTraces } = await import("../../human/trace/calibrator.js");
+            const { calibrateFromTraces } =
+                await import("../../human/trace/calibrator.js");
 
             // Generate synthetic trace data for demonstration
             const syntheticTraces = Array.from({ length: 50 }, (_, i) => ({
-                x: Array.from({ length: 30 }, (_, j) => 400 + Math.sin(j * 0.1) * 100 + Math.random() * 20),
-                y: Array.from({ length: 30 }, (_, j) => 300 + Math.cos(j * 0.1) * 80 + Math.random() * 20),
+                x: Array.from(
+                    { length: 30 },
+                    (_, j) =>
+                        400 + Math.sin(j * 0.1) * 100 + Math.random() * 20,
+                ),
+                y: Array.from(
+                    { length: 30 },
+                    (_, j) => 300 + Math.cos(j * 0.1) * 80 + Math.random() * 20,
+                ),
                 t: Array.from({ length: 30 }, (_, j) => j * 16),
-                velocity: Array.from({ length: 30 }, () => 300 + Math.random() * 800),
-                curvature: Array.from({ length: 30 }, () => Math.random() * 0.5)
+                velocity: Array.from(
+                    { length: 30 },
+                    () => 300 + Math.random() * 800,
+                ),
+                curvature: Array.from(
+                    { length: 30 },
+                    () => Math.random() * 0.5,
+                ),
             }));
 
             const calibrationResult = calibrateFromTraces(syntheticTraces);
@@ -338,28 +355,27 @@
                 details: [
                     `Mixture kurtosis: ${calibration.mixtureKurtosis.toFixed(2)} (target: >6.5)`,
                     `Weighted curvature entropy: ${calibration.weightedCurvatureEntropy.toFixed(2)} bits (target: >4.2)`,
-                    "Entropy tracker now uses trained GMM for velocity sampling"
-                ]
+                    "Entropy tracker now uses trained GMM for velocity sampling",
+                ],
             };
 
             toast.success(`Profile calibrated with trace data`, {
-                description: "Behavioral model updated with human-like patterns",
-                duration: 5000
+                description:
+                    "Behavioral model updated with human-like patterns",
+                duration: 5000,
             });
-
         } catch (error) {
             importStatus = {
                 success: false,
                 title: "Calibration Failed",
                 message: error instanceof Error ? error.message : String(error),
-                details: ["Ensure traces were imported successfully first"]
+                details: ["Ensure traces were imported successfully first"],
             };
             toast.error(`Calibration failed: ${error}`);
         } finally {
             applyingCalibration = false;
         }
     }
-</script>
 
     const TABS: { id: typeof tab; label: string; badge?: () => string }[] = [
         { id: "live", label: "Live View" },
@@ -1105,14 +1121,15 @@
                 {/if}
             </div>
 
-        <!-- ════════ IMPORT TRACES ════════ -->
+            <!-- ════════ IMPORT TRACES ════════ -->
         {:else if tab === "import"}
             <div class="import-tab">
                 <div class="import-header">
                     <h3>Import Human Traces</h3>
                     <p>
-                        Train behavioral models from real human cursor traces to improve entropy and realism.
-                        Higher entropy scores correlate with better anti-detection performance.
+                        Train behavioral models from real human cursor traces to
+                        improve entropy and realism. Higher entropy scores
+                        correlate with better anti-detection performance.
                     </p>
                 </div>
 
@@ -1120,39 +1137,21 @@
                 <div class="import-section">
                     <h4>Select Dataset</h4>
                     <div class="dataset-grid">
-                        {[
-                            {
-                                id: 'attentive-cursor',
-                                name: 'Attentive Cursor',
-                                description: 'Mouse trajectories from reading/web-browsing tasks',
-                                url: 'https://github.com/attentive-cursor/dataset',
-                                format: 'attentive-cursor' as const
-                            },
-                            {
-                                id: 'behacom',
-                                name: 'BEHACOM',
-                                description: 'Behavioral biometrics dataset with timing data',
-                                url: 'https://www.behacom.org/',
-                                format: 'behacom' as const
-                            },
-                            {
-                                id: 'sapimouse',
-                                name: 'SapiMouse',
-                                description: 'High-precision mouse tracking data',
-                                url: 'https://sapimouse.github.io/',
-                                format: 'sapimouse' as const
-                            }
-                        ].map(dataset => (
-                            <div
+                        {#each [{ id: "attentive-cursor", name: "Attentive Cursor", description: "Mouse trajectories from reading/web-browsing tasks", url: "https://github.com/attentive-cursor/dataset", format: "attentive-cursor" }, { id: "behacom", name: "BEHACOM", description: "Behavioral biometrics dataset with timing data", url: "https://www.behacom.org/", format: "behacom" }, { id: "sapimouse", name: "SapiMouse", description: "High-precision mouse tracking data", url: "https://sapimouse.github.io/", format: "sapimouse" }] as dataset (dataset.id)}
+                            <button
                                 class="dataset-card"
                                 class:selected={selectedDataset === dataset.id}
-                                onclick={() => selectedDataset = dataset.id}
+                                onclick={() => (selectedDataset = dataset.id)}
                             >
                                 <div class="dataset-header">
                                     <h5>{dataset.name}</h5>
-                                    <div class="dataset-badge">{dataset.format}</div>
+                                    <div class="dataset-badge">
+                                        {dataset.format}
+                                    </div>
                                 </div>
-                                <p class="dataset-desc">{dataset.description}</p>
+                                <p class="dataset-desc">
+                                    {dataset.description}
+                                </p>
                                 <a
                                     class="dataset-link"
                                     href={dataset.url}
@@ -1162,8 +1161,8 @@
                                 >
                                     📖 Learn more →
                                 </a>
-                            </div>
-                        ))}
+                            </button>
+                        {/each}
                     </div>
                 </div>
 
@@ -1183,9 +1182,12 @@
                                 <button
                                     class="btn btn-secondary"
                                     onclick={handleCalibrateProfile}
-                                    disabled={applyingCalibration || !activeProfile}
+                                    disabled={applyingCalibration ||
+                                        !activeProfile}
                                 >
-                                    {applyingCalibration ? '🔄 Calibrating...' : '⚙️ Auto-Calibrate Profile'}
+                                    {applyingCalibration
+                                        ? "🔄 Calibrating..."
+                                        : "⚙️ Auto-Calibrate Profile"}
                                 </button>
                             {/if}
                         </div>
@@ -1193,12 +1195,17 @@
 
                     <!-- Status display -->
                     {#if importStatus}
-                        <div class="import-status" class:error={!importStatus.success}>
+                        <div
+                            class="import-status"
+                            class:error={!importStatus.success}
+                        >
                             <div class="status-header">
                                 <span class="status-icon">
-                                    {importStatus.success ? '✓' : '✗'}
+                                    {importStatus.success ? "✓" : "✗"}
                                 </span>
-                                <span class="status-title">{importStatus.title}</span>
+                                <span class="status-title"
+                                    >{importStatus.title}</span
+                                >
                             </div>
                             <p class="status-message">{importStatus.message}</p>
                             {#if importStatus.details}
@@ -1217,27 +1224,48 @@
                             <h4>Calibration Results</h4>
                             <div class="metric-grid">
                                 <div class="metric-card">
-                                    <div class="metric-label">Mixture Kurtosis</div>
+                                    <div class="metric-label">
+                                        Mixture Kurtosis
+                                    </div>
                                     <div class="metric-value">
                                         {calibration.mixtureKurtosis.toFixed(2)}
                                     </div>
                                     <div class="metric-target">
                                         Target: >6.5
-                                        <span class={calibration.mixtureKurtosis > 6.5 ? 'target-met' : 'target-missed'}>
-                                            {calibration.mixtureKurtosis > 6.5 ? '✓' : '✗'}
+                                        <span
+                                            class={calibration.mixtureKurtosis >
+                                            6.5
+                                                ? "target-met"
+                                                : "target-missed"}
+                                        >
+                                            {calibration.mixtureKurtosis > 6.5
+                                                ? "✓"
+                                                : "✗"}
                                         </span>
                                     </div>
                                 </div>
 
                                 <div class="metric-card">
-                                    <div class="metric-label">Weighted Curvature Entropy</div>
+                                    <div class="metric-label">
+                                        Weighted Curvature Entropy
+                                    </div>
                                     <div class="metric-value">
-                                        {calibration.weightedCurvatureEntropy.toFixed(2)} bits
+                                        {calibration.weightedCurvatureEntropy.toFixed(
+                                            2,
+                                        )} bits
                                     </div>
                                     <div class="metric-target">
                                         Target: >4.2
-                                        <span class={calibration.weightedCurvatureEntropy > 4.2 ? 'target-met' : 'target-missed'}>
-                                            {calibration.weightedCurvatureEntropy > 4.2 ? '✓' : '✗'}
+                                        <span
+                                            class={calibration.weightedCurvatureEntropy >
+                                            4.2
+                                                ? "target-met"
+                                                : "target-missed"}
+                                        >
+                                            {calibration.weightedCurvatureEntropy >
+                                            4.2
+                                                ? "✓"
+                                                : "✗"}
                                         </span>
                                     </div>
                                 </div>
@@ -1245,11 +1273,11 @@
 
                             <div class="calibration-info">
                                 <p>
-                                    <strong>What this means:</strong> The velocity GMM now has
-                                    realistic multi-modal distributions, and curvature entropy
-                                    reflects natural mouse acceleration patterns. Profiles
-                                    calibrated with real traces achieve 90%+ health scores
-                                    within 80 actions.
+                                    <strong>What this means:</strong> The velocity
+                                    GMM now has realistic multi-modal distributions,
+                                    and curvature entropy reflects natural mouse acceleration
+                                    patterns. Profiles calibrated with real traces
+                                    achieve 90%+ health scores within 80 actions.
                                 </p>
                             </div>
                         </div>
@@ -2108,7 +2136,6 @@
         color: var(--text-muted, #5a5a72);
         font-size: 12px;
     }
-</style>
 
     /* ── Import traces tab ───────────────────────────────────────────────────── */
     .import-tab {
@@ -2154,7 +2181,9 @@
         border-radius: 6px;
         padding: 16px;
         cursor: pointer;
-        transition: border-color 0.15s, background 0.15s;
+        transition:
+            border-color 0.15s,
+            background 0.15s;
         background: var(--surface-1, #0f0f16);
     }
 
@@ -2318,3 +2347,4 @@
         color: var(--text-secondary, #9898ad);
         line-height: 1.6;
     }
+</style>

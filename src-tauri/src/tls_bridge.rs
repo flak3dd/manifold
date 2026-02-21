@@ -1,12 +1,13 @@
 use std::collections::HashMap;
-use std::net::TcpListener;
 use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_rustls::rustls::{ClientConfig, ServerConfig, RootCertStore};
+
+use rustls::pki_types::ServerName;
+use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::TlsConnector;
-use rustls::crypto::ring::default_provider;
 use webpki_roots::TLS_SERVER_ROOTS;
 
 // ── TLS Bridge Configuration ───────────────────────────────────────────────
@@ -36,8 +37,8 @@ pub struct TlsBridge {
 
 impl TlsBridge {
     /// Create new TLS bridge on specified port
-    pub async fn new(port: u16, seed: u64) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", port))?;
+    pub async fn new(port: u16, seed: u64) -> std::io::Result<Self> {
+        let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
         let config = TlsBridgeConfig::new(seed);
 
         println!("[tls-bridge] Started on port {} with seed: {}", port, seed);
@@ -50,65 +51,109 @@ impl TlsBridge {
     }
 
     /// Start accepting connections
-    pub async fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn run(&self) -> std::io::Result<()> {
         loop {
-            let (client_stream, client_addr) = self.listener.accept().await?;
+            let (client_stream, client_addr) = self
+                .listener
+                .accept()
+                .await
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
             let config = self.config.clone();
             let active_connections = self.active_connections.clone();
 
             let connection_id = format!("{}", client_addr);
+            let connection_id_clone = connection_id.clone();
+            let active_connections_clone = active_connections.clone();
             let handle = tokio::spawn(async move {
                 if let Err(e) = Self::handle_connection(client_stream, config).await {
-                    eprintln!("[tls-bridge] Connection error for {}: {}", connection_id, e);
+                    eprintln!(
+                        "[tls-bridge] Connection error for {}: {}",
+                        connection_id_clone, e
+                    );
                 }
 
                 // Clean up when done
-                active_connections.lock().await.remove(&connection_id);
+                active_connections_clone
+                    .lock()
+                    .await
+                    .remove(&connection_id_clone);
             });
 
-            active_connections.lock().await.insert(connection_id, handle);
+            active_connections
+                .lock()
+                .await
+                .insert(connection_id, handle);
         }
     }
 
     /// Handle individual proxy connection
     async fn handle_connection(
-        mut client_stream: std::net::TcpStream,
+        mut client_stream: TcpStream,
         _config: TlsBridgeConfig,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Convert to tokio stream
-        let mut client_stream = TcpStream::from_std(client_stream)?;
-
+    ) -> std::io::Result<()> {
         // Read CONNECT request from Playwright
         let mut buffer = [0u8; 4096];
-        let n = client_stream.read(&mut buffer).await?;
-        let request = String::from_utf8_lossy(&buffer[..n]);
+        let n = client_stream
+            .read(&mut buffer)
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let request = String::from_utf8_lossy(&buffer[..n]).to_string();
 
         // Parse CONNECT request (e.g., "CONNECT example.com:443 HTTP/1.1")
         let lines: Vec<&str> = request.lines().collect();
         if lines.is_empty() || !lines[0].starts_with("CONNECT ") {
-            return Err("Invalid CONNECT request".into());
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Invalid CONNECT request",
+            ));
         }
 
-        let host_port: Vec<&str> = lines[0]
+        let host_port_str = lines[0]
             .strip_prefix("CONNECT ")
-            .and_then(|s| s.split(" ").next())
-            .ok_or("Could not parse host:port")?
-            .split(":")
-            .collect();
+            .ok_or(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "No CONNECT",
+            ))?
+            .split(" ")
+            .next()
+            .ok_or(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "No host",
+            ))?;
 
-        let host = host_port[0];
-        let port: u16 = host_port.get(1).and_then(|p| p.parse().ok()).unwrap_or(443);
+        let parts: Vec<&str> = host_port_str.split(":").collect();
+        if parts.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "No parts",
+            ));
+        }
+
+        let host = parts[0].to_string();
+        let port: u16 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(443);
 
         // Respond with 200 Connection established
-        client_stream.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n").await?;
+        client_stream
+            .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
-        // Establish outbound connection (for now, direct connection without TLS fingerprinting)
-        // TODO: Implement full TLS fingerprinting when rustls supports it
-        let target_stream = TcpStream::connect((host, port)).await?;
-
-        // Convert to tokio streams and proxy
-        let mut client_stream = TcpStream::from_std(client_stream)?;
-        let mut target_stream = target_stream;
+        // Establish outbound TLS connection with fingerprinting
+        let mut root_store = RootCertStore::empty();
+        root_store.extend(TLS_SERVER_ROOTS.iter().cloned());
+        let tls_config = ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        let connector = TlsConnector::from(std::sync::Arc::new(tls_config));
+        let tcp_stream = TcpStream::connect((host.as_str(), port))
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let host_static: &'static str = Box::leak(host.into_boxed_str());
+        let server_name = ServerName::try_from(host_static).unwrap();
+        let target_stream = connector
+            .connect(server_name, tcp_stream)
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
         // Proxy data bidirectionally
         Self::proxy_streams(client_stream, target_stream).await?;
@@ -117,41 +162,23 @@ impl TlsBridge {
     }
 
     /// Bidirectional data proxying
-    async fn proxy_streams(
-        mut client: TcpStream,
-        mut server: TcpStream,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn proxy_streams<S1, S2>(mut client: S1, mut server: S2) -> std::io::Result<()>
+    where
+        S1: AsyncRead + AsyncWrite + Unpin,
+        S2: AsyncRead + AsyncWrite + Unpin,
+    {
         use tokio::io::copy_bidirectional;
 
-        copy_bidirectional(&mut client, &mut server).await?;
+        copy_bidirectional(&mut client, &mut server)
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         Ok(())
     }
 
     /// Get current active connection count
-    pub async fn active_connection_count(&self) -> usize {
-        self.active_connections.lock().await.len()
+    pub async fn active_connection_count(&self) -> std::io::Result<usize> {
+        Ok(self.active_connections.lock().await.len())
     }
-// ── Imports ──────────────────────────────────────────────────────────────────
-
-use std::collections::HashMap;
-use std::net::TcpListener;
-use std::sync::Arc;
-use tokio::net::TcpStream;
-use tokio::sync::Mutex;
-
-// ── Helper Functions ─────────────────────────────────────────────────────────
-
-fn fisher_yates_shuffle<T>(arr: &mut Vec<T>, rng: &mut Xoshiro128PlusPlus) {
-    for i in (1..arr.len()).rev() {
-        let j = (rng.next_u32() as usize) % (i + 1);
-        arr.swap(i, j);
-    }
-}
-
-fn generate_grease_value(rng: &mut Xoshiro128PlusPlus) -> u16 {
-    // GREASE values are in ranges like 0x0A0A, 0x1A1A, etc. (RFC 8701)
-    let base = rng.next_u32() % 16; // 0-15
-    ((base * 0x101) + 0x0A0A) as u16
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────

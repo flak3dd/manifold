@@ -14,17 +14,45 @@
     let seedInput = $state("");
     let generating = $state(false);
     let tab = $state<
-        "noise" | "navigator" | "screen" | "webrtc" | "uach" | "permissions" | "score"
+        | "noise"
+        | "navigator"
+        | "screen"
+        | "webrtc"
+        | "uach"
+        | "permissions"
+        | "score"
     >("noise");
     let toastMsg = $state<string | null>(null);
     let toastTimeout: ReturnType<typeof setTimeout> | null = null;
+    let standaloneMode = $state(false);
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────
     onMount(async () => {
         if (profileStore.profiles.length === 0) {
             await profileStore.loadProfiles();
         }
+        // Auto-generate a fingerprint for standalone exploration
+        if (!fp) {
+            await handleGenerateStandalone();
+        }
     });
+
+    // Generate fingerprint without needing a profile
+    async function handleGenerateStandalone() {
+        generating = true;
+        standaloneMode = true;
+        selectedProfileId = null;
+        try {
+            const newFp = await profileStore.generateFingerprint();
+            fp = newFp;
+            seedInput = String(newFp.seed);
+            dirty = false;
+        } catch (e) {
+            showToast(`Generate failed: ${e}`);
+        } finally {
+            generating = false;
+        }
+    }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
     function showToast(msg: string) {
@@ -74,12 +102,37 @@
             const newFp = await profileStore.generateFingerprint();
             fp = newFp;
             seedInput = String(newFp.seed);
-            dirty = true;
+            dirty = !standaloneMode;
         } catch (e) {
             showToast(`Randomize failed: ${e}`);
         } finally {
             generating = false;
         }
+    }
+
+    async function handleCreateProfileFromFp() {
+        if (!fp) return;
+        saving = true;
+        try {
+            const profile = await profileStore.createProfile({
+                name: `FP-${fp.seed.toString(16).slice(0, 6).toUpperCase()}`,
+                fingerprint: fp,
+            });
+            selectedProfileId = profile.id;
+            standaloneMode = false;
+            dirty = false;
+            showToast("Profile created ✓");
+        } catch (e) {
+            showToast(`Create failed: ${e}`);
+        } finally {
+            saving = false;
+        }
+    }
+
+    function handleCopyJson() {
+        if (!fp) return;
+        navigator.clipboard.writeText(JSON.stringify(fp, null, 2));
+        showToast("Fingerprint JSON copied ✓");
     }
 
     async function handleSave() {
@@ -257,20 +310,33 @@
                 >
                     🎲 Randomize
                 </button>
-                <button
-                    class="btn-secondary"
-                    onclick={handleReseed}
-                    disabled={generating || !selectedProfileId}
-                >
-                    🔄 Reseed
+                <button class="btn-ghost" onclick={handleCopyJson}>
+                    📋 Copy JSON
                 </button>
-                <button
-                    class="btn-primary"
-                    onclick={handleSave}
-                    disabled={saving || !dirty || !selectedProfileId}
-                >
-                    {saving ? "Saving…" : "💾 Save"}
-                </button>
+                {#if standaloneMode}
+                    <button
+                        class="btn-primary"
+                        onclick={handleCreateProfileFromFp}
+                        disabled={saving}
+                    >
+                        {saving ? "Creating…" : "➕ Create Profile"}
+                    </button>
+                {:else}
+                    <button
+                        class="btn-secondary"
+                        onclick={handleReseed}
+                        disabled={generating || !selectedProfileId}
+                    >
+                        🔄 Reseed
+                    </button>
+                    <button
+                        class="btn-primary"
+                        onclick={handleSave}
+                        disabled={saving || !dirty || !selectedProfileId}
+                    >
+                        {saving ? "Saving…" : "💾 Save"}
+                    </button>
+                {/if}
             {/if}
         </div>
     </div>
@@ -280,6 +346,14 @@
         <div class="selector-col">
             <div class="selector-header">
                 <span class="section-label">Profile</span>
+                <button
+                    class="btn-sm"
+                    onclick={handleGenerateStandalone}
+                    disabled={generating}
+                    title="Generate standalone fingerprint"
+                >
+                    ✨ New
+                </button>
             </div>
             <div class="profile-list">
                 {#if profiles.length === 0}
@@ -1056,30 +1130,42 @@
                                 >
                             </div>
                         </div>
-                    <!-- ═══ SCORE TAB ═══ -->
+                        <!-- ═══ SCORE TAB ═══ -->
                     {:else if tab === "score"}
                         <div class="section">
-                            <h3 class="section-title">Fingerprint Risk Score</h3>
+                            <h3 class="section-title">
+                                Fingerprint Risk Score
+                            </h3>
                             <p class="section-desc">
-                                Weighted score across all fingerprint leak vectors.
-                                Score ≥ 85 = green (passes 2026 stealth thresholds).
-                                Red rows indicate failing vectors that need attention.
+                                Weighted score across all fingerprint leak
+                                vectors. Score ≥ 85 = green (passes 2026 stealth
+                                thresholds). Red rows indicate failing vectors
+                                that need attention.
                             </p>
                             <FingerprintPreview
                                 fingerprint={fp}
                                 showIframes={showPreviewIframes}
                             />
-                            <div class="score-iframe-toggle" style="margin-top: 12px;">
-                                <label class="field-label" style="cursor:pointer; display:flex; align-items:center; gap:8px;">
+                            <div
+                                class="score-iframe-toggle"
+                                style="margin-top: 12px;"
+                            >
+                                <label
+                                    class="field-label"
+                                    style="cursor:pointer; display:flex; align-items:center; gap:8px;"
+                                >
                                     <input
                                         type="checkbox"
                                         bind:checked={showPreviewIframes}
                                     />
-                                    Show external detector iframes (CreepJS / Pixelscan / BrowserLeaks)
+                                    Show external detector iframes (CreepJS / Pixelscan
+                                    / BrowserLeaks)
                                 </label>
                                 <p class="section-desc" style="margin-top:4px;">
-                                    ⚠ Iframes open in the host browser context, not the profile context.
-                                    Launch the profile and use the Trace → FP Score tab for in-profile scoring.
+                                    ⚠ Iframes open in the host browser context,
+                                    not the profile context. Launch the profile
+                                    and use the Trace → FP Score tab for
+                                    in-profile scoring.
                                 </p>
                             </div>
                         </div>
@@ -1165,8 +1251,11 @@
         flex-shrink: 0;
     }
     .selector-header {
-        padding: 10px 14px 6px;
+        padding: 10px 14px;
         border-bottom: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
     }
     .section-label {
         font-size: 10px;

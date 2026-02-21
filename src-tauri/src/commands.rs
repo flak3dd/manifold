@@ -8,13 +8,16 @@ use std::sync::Mutex;
 use tauri::State;
 
 use crate::db::Db;
-use crate::error::Result;
+use crate::error::{ManifoldError, Result};
 use crate::fingerprint::{Fingerprint, FingerprintOrchestrator};
 use crate::human::{BehaviorProfile, HumanBehavior};
 use crate::profile::{
     CreateProfileRequest, Profile, ProfileRepo, ProfileStatus, UpdateProfileRequest,
 };
 use crate::proxy::{AddProxyRequest, Proxy, ProxyHealth, ProxyRepo, UpdateProxyRequest};
+
+// For URL parsing in domain extraction
+use url;
 
 // Form scraper types
 use chrono::Utc;
@@ -111,6 +114,7 @@ pub fn update_profile(
             notes,
             tags,
             behavior_profile,
+            tls_bridge: None,
         },
     )
 }
@@ -308,7 +312,7 @@ pub fn launch_profile(
     let config_json = serde_json::to_string(&launch_config).map_err(|e| ManifoldError::Json(e))?;
 
     // Locate the bridge entry-point relative to the workspace
-    let workspace = std::env::current_dir().unwrap_or_else(|| ".".into());
+    let workspace = std::env::current_dir().unwrap_or_else(|_| ".".into());
     let bridge_path = workspace.join("playwright-bridge").join("index.ts");
 
     if !bridge_path.exists() {
@@ -654,9 +658,39 @@ pub fn get_app_info(app: tauri::AppHandle, state: State<'_, AppState>) -> AppInf
 // ── Form scraper command ──────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ScrapedFormSelectorsResponse {
+pub struct FieldInfo {
+    pub name: Option<String>,
+    pub field_type: String,
+    pub selector: String,
+    pub placeholder: Option<String>,
+    pub required: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ButtonInfo {
+    pub text: Option<String>,
+    pub button_type: String,
+    pub selector: String,
+    pub action: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FormAnalysis {
+    pub action: Option<String>,
+    pub method: Option<String>,
+    pub fields: Vec<FieldInfo>,
+    pub buttons: Vec<ButtonInfo>,
+    pub selector: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UrlAnalysisResult {
     pub url: String,
+    pub domain: String,
     pub confidence: f64,
+    pub forms: Vec<FormAnalysis>,
+    pub buttons: Vec<ButtonInfo>,
+    pub endpoints: Vec<String>,
     pub username_selector: Option<String>,
     pub password_selector: Option<String>,
     pub submit_selector: Option<String>,
@@ -672,30 +706,37 @@ pub struct ScrapedFormSelectorsResponse {
     pub captcha_providers: Vec<String>,
     pub has_mfa: bool,
     pub mfa_type: Option<String>,
+    pub suggested_wait_time: u64,
+    pub suggested_timeout: u64,
     pub details: Vec<String>,
 }
 
-/// Scrape form selectors from a target URL using headless browser.
+/// Analyze a URL to gather automation data, form fields, buttons, endpoints, and suggested settings.
+/// This serves as the initial starting point for creating tailored profiles and workflows.
 #[tauri::command]
-pub async fn scrape_form_selectors(
+pub async fn analyze_url(
     url: String,
     timeout: u64,
     wait_for_spa: Option<bool>,
     detect_captcha: Option<bool>,
     detect_mfa: Option<bool>,
-) -> Result<ScrapedFormSelectorsResponse> {
+) -> Result<UrlAnalysisResult> {
     use crate::error::ManifoldError;
 
     let _ = (wait_for_spa, detect_captcha, detect_mfa); // reserved for future use
     let scrape_timeout = timeout;
     let details = vec![];
 
-    // Validate URL
+    // Validate URL and extract domain
     if url.is_empty() || (!url.starts_with("http://") && !url.starts_with("https://")) {
         return Err(ManifoldError::InvalidArg(
             "Invalid URL: must start with http:// or https://".into(),
         ));
     }
+
+    let url_parsed = url::Url::parse(&url)
+        .map_err(|e| ManifoldError::InvalidArg(format!("Invalid URL: {}", e)))?;
+    let domain = url_parsed.host_str().unwrap_or("unknown").to_string();
 
     // Fetch the HTML from the target URL
     let client = reqwest::Client::builder()
@@ -718,8 +759,104 @@ pub async fn scrape_form_selectors(
     // Parse HTML
     let document = scraper::Html::parse_document(&html);
 
-    // Detect form fields
+    // Analyze forms
+    let form_selector = scraper::Selector::parse("form").unwrap();
+    let input_selector = scraper::Selector::parse("input, select, textarea").unwrap();
+    let button_selector =
+        scraper::Selector::parse("button, input[type='submit'], input[type='button']").unwrap();
+    let form_elements = document.select(&form_selector);
+    let mut forms = vec![];
+    let mut endpoints = vec![];
+
+    for (i, form) in form_elements.enumerate() {
+        let form_selector_str = format!("form:nth-of-type({})", i + 1);
+        let action = form.value().attr("action").map(|s| s.to_string());
+        let method = form.value().attr("method").map(|s| s.to_string());
+
+        let mut fields = vec![];
+        let field_elements = form.select(&input_selector);
+
+        for field in field_elements {
+            let selector = if let Some(id) = field.value().attr("id") {
+                format!("#{}", id)
+            } else if let Some(name) = field.value().attr("name") {
+                format!("[name='{}']", name)
+            } else {
+                "input".to_string() // Simple fallback
+            };
+            let name = field.value().attr("name").map(|s| s.to_string());
+            let field_type = field
+                .value()
+                .attr("type")
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "text".to_string());
+            let placeholder = field.value().attr("placeholder").map(|s| s.to_string());
+            let required = field.value().attr("required").is_some();
+
+            fields.push(FieldInfo {
+                name,
+                field_type,
+                selector,
+                placeholder,
+                required,
+            });
+        }
+
+        let mut buttons = vec![];
+        let button_elements = form.select(&button_selector);
+
+        for button in button_elements {
+            let text = button.text().collect::<String>().trim().to_string();
+            let button_type = button
+                .value()
+                .attr("type")
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "button".to_string());
+            let selector = if let Some(id) = button.value().attr("id") {
+                format!("#{}", id)
+            } else if let Some(name) = button.value().attr("name") {
+                format!("[name='{}']", name)
+            } else {
+                "button".to_string()
+            };
+            let action_attr = button.value().attr("formaction").map(|s| s.to_string());
+
+            buttons.push(ButtonInfo {
+                text: if text.is_empty() { None } else { Some(text) },
+                button_type,
+                selector,
+                action: action_attr,
+            });
+        }
+
+        forms.push(FormAnalysis {
+            action: action.clone(),
+            method,
+            fields,
+            buttons,
+            selector: form_selector_str,
+        });
+
+        if let Some(act) = action {
+            endpoints.push(act);
+        }
+    }
+
+    // Standalone buttons (outside forms)
+    let buttons: Vec<ButtonInfo> = vec![];
+
+    // Detect form fields (legacy selectors)
     let selectors = detect_form_fields(&document);
+
+    // Calculate suggested settings
+    let script_count = document
+        .select(&scraper::Selector::parse("script").unwrap())
+        .count() as u64;
+    let image_count = document
+        .select(&scraper::Selector::parse("img").unwrap())
+        .count() as u64;
+    let suggested_wait_time = (script_count * 200 + image_count * 50).max(1000).min(15000);
+    let suggested_timeout = timeout.max(10000).min(60000);
 
     // Calculate confidence
     let mut confidence: f64 = 0.0;
@@ -761,9 +898,13 @@ pub async fn scrape_form_selectors(
 
     let has_mfa = selectors.totp_selector.is_some() || detect_mfa_indicators(&html);
 
-    Ok(ScrapedFormSelectorsResponse {
+    Ok(UrlAnalysisResult {
         url,
+        domain,
         confidence,
+        forms,
+        buttons,
+        endpoints,
         username_selector: selectors.username_selector,
         password_selector: selectors.password_selector,
         submit_selector: selectors.submit_selector,
@@ -778,7 +919,13 @@ pub async fn scrape_form_selectors(
         has_captcha: detect_captcha_in_html(&html).0,
         captcha_providers: detect_captcha_in_html(&html).1,
         has_mfa,
-        mfa_type: None,
+        mfa_type: if has_mfa {
+            Some("TOTP".to_string())
+        } else {
+            None
+        },
+        suggested_wait_time,
+        suggested_timeout,
         details,
     })
 }
@@ -1087,6 +1234,7 @@ pub fn auto_correct_geo(
         notes: None,
         tags: None,
         behavior_profile: None,
+        tls_bridge: None,
     };
     profiles.update(&profile_id, req)?;
 

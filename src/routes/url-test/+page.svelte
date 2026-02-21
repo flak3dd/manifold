@@ -2,8 +2,14 @@
     import { goto } from "$app/navigation";
     import { urlTestStore } from "$lib/stores/urltest.svelte";
     import { appStore } from "$lib/stores/app.svelte";
+    import { profileStore } from "$lib/stores/profiles.svelte";
+    import { proxyStore } from "$lib/stores/proxy.svelte";
     import { scrapeHandoff } from "$lib/stores/scrape-handoff.svelte";
-    import type { UrlTestResult, UrlTestDetectedForm } from "$lib/types";
+    import type {
+        UrlTestResult,
+        UrlTestDetectedForm,
+        ProfileTarget,
+    } from "$lib/types";
 
     let targetUrl = $state("");
     let username = $state("");
@@ -20,8 +26,43 @@
     let screenshotTab = $state<"desktop" | "tablet" | "mobile">("desktop");
     let showScreenshotLightbox = $state<string | null>(null);
     let activeTab = $state<
-        "results" | "forms" | "login" | "screenshots" | "history"
+        "results" | "forms" | "login" | "screenshots" | "history" | "create"
     >("results");
+
+    // ── Profile Creation State ─────────────────────────────────────────────
+    let profileName = $state("");
+    let selectedProxyId = $state<string | null>(null);
+    let selectedBehavior = $state<"bot" | "fast" | "normal" | "cautious">(
+        "normal",
+    );
+    let profileTags = $state<string[]>([]);
+    let tagInput = $state("");
+    let creatingProfile = $state(false);
+    let createSuccess = $state(false);
+
+    // Derived
+    let proxies = $derived(proxyStore.proxies);
+    let suggestedName = $derived(() => {
+        if (!activeTest) return "";
+        try {
+            const url = new URL(activeTest.url);
+            const domain = url.hostname.replace("www.", "").split(".")[0];
+            const timestamp = Date.now().toString(36).slice(-4).toUpperCase();
+            return `${domain}-${timestamp}`;
+        } catch {
+            return `profile-${Date.now().toString(36).slice(-4)}`;
+        }
+    });
+
+    // Extract domain for profile target
+    let targetDomain = $derived(() => {
+        if (!activeTest) return "";
+        try {
+            return new URL(activeTest.url).hostname;
+        } catch {
+            return "";
+        }
+    });
 
     let progressPct = $derived(
         activeTest?.progress
@@ -115,8 +156,8 @@
     }
 
     /** Build form selectors from detected forms/login results and navigate to /automation */
-    function handleUseInAutomation() {
-        if (!activeTest) return;
+    function extractSelectors() {
+        if (!activeTest) return null;
 
         let uSelector = "";
         let pSelector = "";
@@ -299,7 +340,7 @@
                 ? noteParts.join(" | ")
                 : "Extracted from URL test results";
 
-        scrapeHandoff.set({
+        return {
             url: activeTest.url,
             username_selector: uSelector,
             password_selector: pSelector,
@@ -310,9 +351,136 @@
             consent_selector: consentSelector || undefined,
             totp_selector: totpSelector || undefined,
             detection_note: note,
-        });
+        };
+    }
 
+    function handleUseInAutomation() {
+        const selectors = extractSelectors();
+        if (!selectors) return;
+        scrapeHandoff.set(selectors);
         goto("/automation");
+    }
+
+    function handleStartProfileCreation() {
+        if (!activeTest) return;
+        profileName = suggestedName();
+        selectedProxyId = null;
+        selectedBehavior = "normal";
+        profileTags = [];
+        createSuccess = false;
+        activeTab = "create";
+    }
+
+    async function handleCreateProfile() {
+        if (!activeTest || !profileName.trim()) return;
+        creatingProfile = true;
+        createSuccess = false;
+
+        try {
+            const selectors = extractSelectors();
+
+            // Build target from URL analysis
+            const tags: ProfileTarget["tags"] = [];
+            if (
+                activeTest.loginResult?.captchaProviders?.includes("hCaptcha")
+            ) {
+                tags.push("captcha-hcaptcha");
+            }
+            if (
+                activeTest.loginResult?.captchaProviders?.includes("reCAPTCHA")
+            ) {
+                tags.push("captcha-recaptcha");
+            }
+            if (activeTest.loginResult?.isMultiStep) {
+                tags.push("mfa-required");
+            }
+            if (activeTest.loginResult?.rateLimitSignals?.length) {
+                tags.push("rate-limit-sensitive");
+            }
+
+            const target: ProfileTarget = {
+                url: activeTest.url,
+                platform: targetDomain(),
+                tags,
+                optimized: false,
+                snippet_ids: [],
+            };
+
+            // Create notes with detection info and selectors
+            const noteLines: string[] = [];
+            const lr = activeTest.loginResult;
+
+            // Include selectors in notes for reference
+            if (selectors?.username_selector) {
+                noteLines.push(`Username: ${selectors.username_selector}`);
+            }
+            if (selectors?.password_selector) {
+                noteLines.push(`Password: ${selectors.password_selector}`);
+            }
+            if (selectors?.submit_selector) {
+                noteLines.push(`Submit: ${selectors.submit_selector}`);
+            }
+            if (selectors?.success_selector) {
+                noteLines.push(`Success: ${selectors.success_selector}`);
+            }
+            if (selectors?.captcha_selector) {
+                noteLines.push(`Captcha: ${selectors.captcha_selector}`);
+            }
+            if (selectors?.detection_note) {
+                noteLines.push(`Detection: ${selectors.detection_note}`);
+            }
+            if (activeTest.forms.length > 0) {
+                noteLines.push(`Forms detected: ${activeTest.forms.length}`);
+            }
+            if (lr?.captchaProviders && lr.captchaProviders.length > 0) {
+                noteLines.push(`Captcha: ${lr.captchaProviders.join(", ")}`);
+            }
+            if (lr?.isMultiStep) {
+                noteLines.push("Multi-step login flow");
+            }
+
+            // Create the profile with a random seed (fingerprint generated on backend)
+            const profile = await profileStore.createProfile(
+                {
+                    name: profileName.trim(),
+                    proxy_id: selectedProxyId ?? undefined,
+                    behavior_profile: selectedBehavior,
+                    tags: profileTags,
+                    notes: noteLines.join("\n"),
+                },
+                target,
+            );
+
+            createSuccess = true;
+
+            // Brief delay then offer next steps
+            setTimeout(() => {
+                // Keep on create tab to show success + next actions
+            }, 500);
+        } catch (e) {
+            console.error("Failed to create profile:", e);
+        } finally {
+            creatingProfile = false;
+        }
+    }
+
+    function addTag() {
+        const tag = tagInput.trim();
+        if (tag && !profileTags.includes(tag)) {
+            profileTags = [...profileTags, tag];
+        }
+        tagInput = "";
+    }
+
+    function removeTag(tag: string) {
+        profileTags = profileTags.filter((t) => t !== tag);
+    }
+
+    function handleTagKeydown(e: KeyboardEvent) {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            addTag();
+        }
     }
 </script>
 
@@ -389,41 +557,56 @@
         <div class="header-actions">
             {#if activeTest?.status === "completed"}
                 <button
-                    class="btn btn-secondary btn-sm"
-                    onclick={handleUseInAutomation}
-                    title="Send detected form selectors to the Automation page"
+                    class="btn btn-primary btn-sm"
+                    onclick={handleStartProfileCreation}
                 >
                     <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
-                        <path
-                            d="M1 5.5h8M6.5 2l3 3.5-3 3.5"
+                        <circle
+                            cx="5.5"
+                            cy="5.5"
+                            r="4"
                             stroke="currentColor"
-                            stroke-width="1.3"
+                            stroke-width="1.2"
+                        />
+                        <path
+                            d="M5.5 3.5v4M3.5 5.5h4"
+                            stroke="currentColor"
+                            stroke-width="1.2"
                             stroke-linecap="round"
-                            stroke-linejoin="round"
                         />
                     </svg>
-                    Use in Automation
+                    Create Profile
                 </button>
                 <button
                     class="btn btn-secondary btn-sm"
-                    onclick={() => urlTestStore.downloadReport(activeTest!.id)}
+                    onclick={handleUseInAutomation}
                 >
                     <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
                         <path
-                            d="M5.5 1v7M2.5 5.5l3 3 3-3"
+                            d="M1 5.5h9M6.5 1L10 5.5 6.5 10"
                             stroke="currentColor"
-                            stroke-width="1.3"
+                            stroke-width="1.2"
                             stroke-linecap="round"
                             stroke-linejoin="round"
                         />
+                    </svg>
+                    Automation
+                </button>
+                <button
+                    class="btn btn-ghost btn-sm"
+                    onclick={() =>
+                        urlTestStore.downloadReport(activeTest?.id ?? "")}
+                >
+                    <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
                         <path
-                            d="M1 9h9"
+                            d="M1 7v2.5a1 1 0 001 1h7a1 1 0 001-1V7M5.5 1v6.5M3 5l2.5 2.5L8 5"
                             stroke="currentColor"
-                            stroke-width="1.3"
+                            stroke-width="1.2"
                             stroke-linecap="round"
+                            stroke-linejoin="round"
                         />
                     </svg>
-                    Export Report
+                    Export
                 </button>
             {/if}
         </div>
@@ -767,6 +950,18 @@
                     <span class="tab-count muted">{history.length}</span>
                 {/if}
             </button>
+            {#if activeTest?.status === "completed"}
+                <button
+                    class="tab tab-create"
+                    class:active={activeTab === "create"}
+                    onclick={() => {
+                        activeTab = "create";
+                        if (!profileName) profileName = suggestedName();
+                    }}
+                >
+                    ➕ Create Profile
+                </button>
+            {/if}
         </div>
     {/if}
 
@@ -1356,6 +1551,188 @@
                     </div>
                 {/if}
             </div>
+        {:else if activeTab === "create"}
+            <div class="create-panel">
+                {#if createSuccess}
+                    <div class="create-success">
+                        <div class="success-icon">✓</div>
+                        <h3 class="success-title">Profile Created!</h3>
+                        <p class="success-desc">
+                            <strong>{profileName}</strong> is ready for {targetDomain()}
+                        </p>
+                        <div class="success-actions">
+                            <a href="/" class="btn btn-primary">
+                                Go to Dashboard
+                            </a>
+                            <button
+                                class="btn btn-secondary"
+                                onclick={handleUseInAutomation}
+                            >
+                                Run Automation
+                            </button>
+                            <button
+                                class="btn btn-ghost"
+                                onclick={() => {
+                                    createSuccess = false;
+                                    activeTab = "results";
+                                }}
+                            >
+                                Continue Testing
+                            </button>
+                        </div>
+                    </div>
+                {:else}
+                    <div class="create-form">
+                        <h3 class="create-title">
+                            Create Profile from Analysis
+                        </h3>
+                        <p class="create-desc">
+                            Create a browser profile tailored for <strong
+                                >{targetDomain()}</strong
+                            > with all detected selectors and settings pre-configured.
+                        </p>
+
+                        <div class="create-grid">
+                            <div class="create-field">
+                                <label class="field-label">Profile Name</label>
+                                <input
+                                    type="text"
+                                    class="input"
+                                    bind:value={profileName}
+                                    placeholder={suggestedName()}
+                                />
+                            </div>
+
+                            <div class="create-field">
+                                <label class="field-label"
+                                    >Proxy (Optional)</label
+                                >
+                                <select
+                                    class="input"
+                                    bind:value={selectedProxyId}
+                                >
+                                    <option value={null}>No proxy</option>
+                                    {#each proxies as proxy}
+                                        <option value={proxy.id}>
+                                            {proxy.name} ({proxy.country ||
+                                                "Unknown"})
+                                        </option>
+                                    {/each}
+                                </select>
+                            </div>
+
+                            <div class="create-field">
+                                <label class="field-label"
+                                    >Behavior Profile</label
+                                >
+                                <select
+                                    class="input"
+                                    bind:value={selectedBehavior}
+                                >
+                                    <option value="cautious"
+                                        >Cautious (slower, more human-like)</option
+                                    >
+                                    <option value="normal"
+                                        >Normal (balanced)</option
+                                    >
+                                    <option value="fast"
+                                        >Fast (quicker actions)</option
+                                    >
+                                    <option value="bot">Bot (no delays)</option>
+                                </select>
+                            </div>
+
+                            <div class="create-field">
+                                <label class="field-label">Tags</label>
+                                <div class="tags-input-wrap">
+                                    <input
+                                        type="text"
+                                        class="input"
+                                        bind:value={tagInput}
+                                        placeholder="Add tag..."
+                                        onkeydown={handleTagKeydown}
+                                    />
+                                    <button class="btn btn-sm" onclick={addTag}
+                                        >Add</button
+                                    >
+                                </div>
+                                {#if profileTags.length > 0}
+                                    <div class="tags-list">
+                                        {#each profileTags as tag}
+                                            <span class="tag">
+                                                {tag}
+                                                <button
+                                                    class="tag-remove"
+                                                    onclick={() =>
+                                                        removeTag(tag)}
+                                                    >×</button
+                                                >
+                                            </span>
+                                        {/each}
+                                    </div>
+                                {/if}
+                            </div>
+                        </div>
+
+                        <div class="create-summary">
+                            <h4 class="summary-title">
+                                Included from Analysis
+                            </h4>
+                            <div class="summary-grid">
+                                {#if activeTest?.loginResult?.usernameSelector}
+                                    <span class="summary-item"
+                                        >✓ Username selector</span
+                                    >
+                                {/if}
+                                {#if activeTest?.loginResult?.passwordSelector}
+                                    <span class="summary-item"
+                                        >✓ Password selector</span
+                                    >
+                                {/if}
+                                {#if activeTest?.loginResult?.submitSelector}
+                                    <span class="summary-item"
+                                        >✓ Submit selector</span
+                                    >
+                                {/if}
+                                {#if activeTest?.loginResult?.captchaSelector}
+                                    <span class="summary-item warn"
+                                        >⚠ Captcha detected</span
+                                    >
+                                {/if}
+                                {#if activeTest?.loginResult?.isMultiStep}
+                                    <span class="summary-item"
+                                        >✓ Multi-step flow</span
+                                    >
+                                {/if}
+                                {#if activeTest?.forms.length > 0}
+                                    <span class="summary-item"
+                                        >{activeTest.forms.length} form(s)</span
+                                    >
+                                {/if}
+                            </div>
+                        </div>
+
+                        <div class="create-actions">
+                            <button
+                                class="btn btn-primary"
+                                onclick={handleCreateProfile}
+                                disabled={creatingProfile ||
+                                    !profileName.trim()}
+                            >
+                                {creatingProfile
+                                    ? "Creating..."
+                                    : "Create Profile"}
+                            </button>
+                            <button
+                                class="btn btn-ghost"
+                                onclick={() => (activeTab = "results")}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                {/if}
+            </div>
         {:else if activeTab === "history"}
             <!-- ── History Panel ──────────────────────────────────────── -->
             <div class="history-panel">
@@ -1930,6 +2307,16 @@
 
     .tab.active {
         color: var(--text-primary);
+        border-bottom-color: var(--accent);
+    }
+
+    .tab.tab-create {
+        color: var(--accent);
+        font-weight: 500;
+    }
+
+    .tab.tab-create.active {
+        color: var(--accent);
         border-bottom-color: var(--accent);
     }
 
@@ -2598,5 +2985,170 @@
             opacity: 1;
             transform: translateY(0);
         }
+    }
+
+    /* ── Create Profile Panel ────────────────────────────────────── */
+    .create-panel {
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 400px;
+    }
+
+    .create-form {
+        max-width: 480px;
+        width: 100%;
+    }
+
+    .create-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--fg);
+        margin: 0 0 6px;
+    }
+
+    .create-desc {
+        font-size: 12px;
+        color: var(--fg-muted);
+        margin: 0 0 20px;
+        line-height: 1.5;
+    }
+
+    .create-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+    }
+
+    .create-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .tags-input-wrap {
+        display: flex;
+        gap: 6px;
+    }
+
+    .tags-input-wrap .input {
+        flex: 1;
+    }
+
+    .tags-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-top: 6px;
+    }
+
+    .tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        background: var(--bg-2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        font-size: 10px;
+        color: var(--fg-muted);
+    }
+
+    .tag-remove {
+        background: none;
+        border: none;
+        color: var(--fg-muted);
+        cursor: pointer;
+        font-size: 12px;
+        line-height: 1;
+        padding: 0;
+        margin-left: 2px;
+    }
+
+    .tag-remove:hover {
+        color: var(--red);
+    }
+
+    .create-summary {
+        margin-top: 20px;
+        padding: 12px;
+        background: var(--bg-2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+    }
+
+    .summary-title {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--fg-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin: 0 0 8px;
+    }
+
+    .summary-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .summary-item {
+        font-size: 11px;
+        color: var(--green);
+        background: rgba(var(--green-rgb), 0.1);
+        padding: 3px 8px;
+        border-radius: 4px;
+    }
+
+    .summary-item.warn {
+        color: var(--orange);
+        background: rgba(var(--orange-rgb), 0.1);
+    }
+
+    .create-actions {
+        margin-top: 20px;
+        display: flex;
+        gap: 8px;
+    }
+
+    /* ── Create Success ────────────────────────────────────────────── */
+    .create-success {
+        text-align: center;
+        padding: 40px 20px;
+    }
+
+    .success-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        background: var(--green);
+        color: white;
+        font-size: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 16px;
+    }
+
+    .success-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--fg);
+        margin: 0 0 8px;
+    }
+
+    .success-desc {
+        font-size: 13px;
+        color: var(--fg-muted);
+        margin: 0 0 24px;
+    }
+
+    .success-actions {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+        flex-wrap: wrap;
     }
 </style>

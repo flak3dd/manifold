@@ -70,8 +70,8 @@ pub fn run() {
             commands::save_data,
             commands::load_data,
             commands::get_app_info,
-            // ── Form scraper ──────────────────────────────────────────────────
-            commands::scrape_form_selectors,
+            // ── URL Analysis ──────────────────────────────────────────────────
+            commands::analyze_url,
             // ── Geo consistency ───────────────────────────────────────────────
             commands::validate_geo_consistency,
             commands::auto_correct_geo,

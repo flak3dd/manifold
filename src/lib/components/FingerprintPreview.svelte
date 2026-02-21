@@ -15,8 +15,18 @@
     //
     // Each vector produces a 0–100 sub-score; the weighted sum is the overall
     // score. Score ≥ 85 = green (spec threshold), 60–84 = amber, < 60 = red.
+    //
+    // AmIUnique Integration: Also provides population-based uniqueness scoring
+    // calibrated against real browser statistics from AmIUnique.org research.
 
     import type { Fingerprint } from "$lib/types";
+    import {
+        analyzeFingerprint,
+        getAnonymityGrade,
+        formatUniquenessRatio,
+        checkBotDetectionRisk,
+        type AmIUniqueScore,
+    } from "$lib/fingerprint-score";
 
     let {
         fingerprint,
@@ -199,6 +209,31 @@
 
     let failingVectors = $derived(vectors.filter((v) => v.failing));
 
+    // ── AmIUnique-style Analysis ──────────────────────────────────────────────
+    let amiuniqueAnalysis = $derived.by((): AmIUniqueScore | null => {
+        if (!fingerprint) return null;
+        return analyzeFingerprint(fingerprint);
+    });
+
+    let anonymityGrade = $derived(
+        amiuniqueAnalysis
+            ? getAnonymityGrade(amiuniqueAnalysis.anonymityScore)
+            : "—",
+    );
+
+    let uniquenessDisplay = $derived(
+        amiuniqueAnalysis
+            ? formatUniquenessRatio(amiuniqueAnalysis.uniquenessRatio)
+            : "—",
+    );
+
+    let botDetectionCheck = $derived.by(() => {
+        if (!fingerprint) return { wouldPass: true, risks: [] };
+        return checkBotDetectionRisk(fingerprint);
+    });
+
+    let showAmIUniqueDetails = $state(false);
+
     // ── Iframe previews ───────────────────────────────────────────────────────
 
     let activePreview = $state<"creepjs" | "pixelscan" | "browserleaks" | null>(
@@ -278,6 +313,36 @@
                     identified by detectors.
                 {/if}
             </p>
+
+            <!-- AmIUnique-style metrics -->
+            {#if amiuniqueAnalysis}
+                <div class="amiunique-summary">
+                    <div class="amiunique-metric">
+                        <span class="metric-label">Anonymity Grade</span>
+                        <span
+                            class="metric-value grade-{amiuniqueAnalysis.riskLevel}"
+                            >{anonymityGrade}</span
+                        >
+                    </div>
+                    <div class="amiunique-metric">
+                        <span class="metric-label">Uniqueness</span>
+                        <span class="metric-value">{uniquenessDisplay}</span>
+                    </div>
+                    <div class="amiunique-metric">
+                        <span class="metric-label">Entropy</span>
+                        <span class="metric-value"
+                            >{amiuniqueAnalysis.totalEntropyBits} bits</span
+                        >
+                    </div>
+                </div>
+                <button
+                    class="amiunique-toggle"
+                    onclick={() =>
+                        (showAmIUniqueDetails = !showAmIUniqueDetails)}
+                >
+                    {showAmIUniqueDetails ? "Hide" : "Show"} AmIUnique Analysis
+                </button>
+            {/if}
             {#if failingVectors.length > 0}
                 <div class="failing-list">
                     <span class="failing-label">Failing vectors:</span>
@@ -289,7 +354,88 @@
         </div>
     </div>
 
-    <!-- ── Per-vector breakdown ───────────────────────────────────────── -->
+    <!-- ── AmIUnique Detailed Analysis ────────────────────────────────── -->
+    {#if showAmIUniqueDetails && amiuniqueAnalysis}
+        <div class="amiunique-details">
+            <h4 class="amiunique-title">
+                <span>AmIUnique Analysis</span>
+                <span class="risk-badge risk-{amiuniqueAnalysis.riskLevel}">
+                    {amiuniqueAnalysis.riskLevel.toUpperCase()} RISK
+                </span>
+            </h4>
+
+            <!-- Attribute scores -->
+            <div class="attribute-list">
+                {#each amiuniqueAnalysis.attributes as attr}
+                    <div class="attribute-row" class:is-risk={attr.isRisk}>
+                        <span class="attr-label">{attr.label}</span>
+                        <span class="attr-value mono">{attr.value}</span>
+                        <span
+                            class="attr-score"
+                            style:color={attr.anonymityScore >= 70
+                                ? "var(--success)"
+                                : attr.anonymityScore >= 40
+                                  ? "var(--warning)"
+                                  : "var(--error)"}
+                        >
+                            {attr.anonymityScore}%
+                        </span>
+                        <span class="attr-entropy"
+                            >{attr.entropyBits.toFixed(1)}b</span
+                        >
+                        {#if attr.frequency !== null}
+                            <span class="attr-freq"
+                                >{(attr.frequency * 100).toFixed(1)}%</span
+                            >
+                        {/if}
+                    </div>
+                {/each}
+            </div>
+
+            <!-- Correlation penalties -->
+            {#if amiuniqueAnalysis.correlationPenalties.length > 0}
+                <div class="correlation-section">
+                    <h5>Correlation Penalties</h5>
+                    {#each amiuniqueAnalysis.correlationPenalties as penalty}
+                        <div class="penalty-row">
+                            <span class="penalty-desc"
+                                >{penalty.description}</span
+                            >
+                            <span class="penalty-amount"
+                                >-{penalty.penalty}%</span
+                            >
+                        </div>
+                    {/each}
+                </div>
+            {/if}
+
+            <!-- Bot detection check -->
+            {#if !botDetectionCheck.wouldPass}
+                <div class="bot-detection-warning">
+                    <h5>⚠️ Bot Detection Risks</h5>
+                    <ul>
+                        {#each botDetectionCheck.risks as risk}
+                            <li>{risk}</li>
+                        {/each}
+                    </ul>
+                </div>
+            {/if}
+
+            <!-- Recommendations -->
+            {#if amiuniqueAnalysis.recommendations.length > 0}
+                <div class="recommendations-section">
+                    <h5>Recommendations</h5>
+                    <ul>
+                        {#each amiuniqueAnalysis.recommendations as rec}
+                            <li>{rec}</li>
+                        {/each}
+                    </ul>
+                </div>
+            {/if}
+        </div>
+    {/if}
+
+    <!-- ── Vector breakdown table ─────────────────────────────────────── -->
     {#if fingerprint}
         <div class="vectors">
             {#each vectors as v (v.id)}
@@ -689,5 +835,201 @@
         height: 520px;
         border: none;
         background: #fff;
+    }
+    /* ── AmIUnique Analysis Styles ─────────────────────────────────────── */
+    .amiunique-summary {
+        display: flex;
+        gap: 16px;
+        margin-top: 12px;
+        padding: 10px 12px;
+        background: var(--surface-2);
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border-subtle);
+    }
+
+    .amiunique-metric {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+    }
+
+    .metric-label {
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--text-muted);
+    }
+
+    .metric-value {
+        font-size: 14px;
+        font-weight: 600;
+    }
+
+    .metric-value.grade-low {
+        color: var(--success);
+    }
+    .metric-value.grade-medium {
+        color: var(--warning);
+    }
+    .metric-value.grade-high {
+        color: var(--error);
+    }
+    .metric-value.grade-critical {
+        color: var(--error);
+    }
+
+    .amiunique-toggle {
+        margin-top: 8px;
+        padding: 4px 10px;
+        font-size: 10px;
+        background: var(--surface-3);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+
+    .amiunique-toggle:hover {
+        background: var(--surface-4);
+    }
+
+    .amiunique-details {
+        margin-top: 16px;
+        padding: 14px;
+        background: var(--surface-1);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+    }
+
+    .amiunique-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 13px;
+        font-weight: 600;
+        margin: 0 0 12px;
+    }
+
+    .risk-badge {
+        font-size: 9px;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-weight: 600;
+    }
+
+    .risk-badge.risk-low {
+        background: var(--success);
+        color: white;
+    }
+    .risk-badge.risk-medium {
+        background: var(--warning);
+        color: black;
+    }
+    .risk-badge.risk-high {
+        background: var(--error);
+        color: white;
+    }
+    .risk-badge.risk-critical {
+        background: var(--error);
+        color: white;
+    }
+
+    .attribute-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .attribute-row {
+        display: grid;
+        grid-template-columns: 120px 1fr 50px 40px 50px;
+        gap: 8px;
+        align-items: center;
+        padding: 6px 8px;
+        font-size: 11px;
+        background: var(--surface-2);
+        border-radius: var(--radius-sm);
+    }
+
+    .attribute-row.is-risk {
+        background: rgba(var(--error-rgb), 0.1);
+        border-left: 2px solid var(--error);
+    }
+
+    .attr-label {
+        font-weight: 500;
+        color: var(--text-secondary);
+    }
+
+    .attr-value {
+        color: var(--text-muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .attr-score {
+        text-align: right;
+        font-weight: 600;
+    }
+
+    .attr-entropy,
+    .attr-freq {
+        text-align: right;
+        color: var(--text-muted);
+        font-size: 10px;
+    }
+
+    .correlation-section,
+    .bot-detection-warning,
+    .recommendations-section {
+        margin-top: 12px;
+        padding: 10px;
+        background: var(--surface-2);
+        border-radius: var(--radius-sm);
+    }
+
+    .correlation-section h5,
+    .bot-detection-warning h5,
+    .recommendations-section h5 {
+        font-size: 11px;
+        font-weight: 600;
+        margin: 0 0 8px;
+        color: var(--text-secondary);
+    }
+
+    .penalty-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        padding: 4px 0;
+    }
+
+    .penalty-desc {
+        color: var(--text-muted);
+    }
+
+    .penalty-amount {
+        color: var(--error);
+        font-weight: 600;
+    }
+
+    .bot-detection-warning {
+        border-left: 3px solid var(--warning);
+    }
+
+    .bot-detection-warning ul,
+    .recommendations-section ul {
+        margin: 0;
+        padding-left: 16px;
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+
+    .bot-detection-warning li,
+    .recommendations-section li {
+        margin: 4px 0;
     }
 </style>
