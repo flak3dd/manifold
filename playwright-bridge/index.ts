@@ -150,7 +150,7 @@ function parseLaunchConfig(): LaunchConfig {
       },
       proxy: null,
       url: "https://www.google.com",
-      wsPort: 1422,
+      wsPort: 8766,
     };
   }
   try {
