@@ -37,6 +37,12 @@ export { fontsEvasion }           from "./fonts.js";
 export { webrtcEvasion }          from "./webrtc.js";
 export { clientHintsEvasion, installClientHintsRoute } from "./client-hints.js";
 export { navigatorEvasion }       from "./navigator.js";
+export {
+  installTlsGreaseRoute,
+  buildJa4hPartial,
+  CHROME_H2_SETTINGS_REFERENCE,
+} from "./tls-grease.js";
+export type { TlsGreaseOptions, Ja4hFields } from "./tls-grease.js";
 export type { EvasionConfig }     from "./types.js";
 
 import { canvasEvasion }          from "./canvas.js";
@@ -46,6 +52,7 @@ import { fontsEvasion }           from "./fonts.js";
 import { webrtcEvasion }          from "./webrtc.js";
 import { clientHintsEvasion, installClientHintsRoute } from "./client-hints.js";
 import { navigatorEvasion }       from "./navigator.js";
+import { installTlsGreaseRoute }  from "./tls-grease.js";
 
 // ── Init-script registry ──────────────────────────────────────────────────────
 //
@@ -86,6 +93,7 @@ function isDisabledScript(script: string): boolean {
  * - Registers every JS init script via `page.addInitScript()` so they run
  *   before any page script in every frame and popup.
  * - Installs the Client-Hints route interceptor via `page.route()`.
+ * - Installs the TLS-GREASE / JA4H header-diversity interceptor.
  *
  * Call this once per page, immediately after `context.newPage()`, before
  * navigating anywhere.
@@ -138,7 +146,21 @@ export async function applyAllEvasions(
     failed.push("clientHintsRoute");
   }
 
-  // 3. Summary log (useful for debugging; silent in production)
+  // 3. Install TLS-GREASE / JA4H header-diversity route interceptor
+  try {
+    await installTlsGreaseRoute(page, cfg, {
+      seed: cfg.seed,
+      injectPriority: true,
+      suppressAltSvc: false,
+    });
+    applied.push("tlsGreaseRoute");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[manifold/evasions] Failed to install TLS-GREASE route: ${msg}`);
+    failed.push("tlsGreaseRoute");
+  }
+
+  // 4. Summary log (useful for debugging; silent in production)
   if (process.env.MANIFOLD_DEBUG === "1") {
     console.info(
       `[manifold/evasions] applied=${applied.join(",")} ` +

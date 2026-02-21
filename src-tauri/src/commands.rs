@@ -1029,6 +1029,61 @@ fn detect_mfa_indicators(html: &str) -> bool {
         .any(|kw| html.to_lowercase().contains(kw))
 }
 
+// ── Geo consistency commands ──────────────────────────────────────────────────
+
+use crate::geo_validator::{AutoCorrectResult, GeoValidator, GeoViolation};
+
+/// Validate a profile's fingerprint for geo-consistency against a proxy country.
+///
+/// Returns a list of violations (may be empty if all checks pass).
+/// `proxy_country` is an ISO-3166-1 alpha-2 code (e.g. "US"). Pass `null`/`None`
+/// to run only internal self-consistency checks.
+#[tauri::command]
+pub fn validate_geo_consistency(
+    profile_id: String,
+    proxy_country: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<GeoViolation>> {
+    let profiles = state.profiles.lock().unwrap();
+    let profile = profiles.get(&profile_id)?;
+
+    let violations = GeoValidator::validate(&profile.fingerprint, proxy_country.as_deref());
+
+    Ok(violations)
+}
+
+/// Auto-correct a profile's fingerprint for geo-consistency and persist the result.
+///
+/// Calls `enforce_geo()` for locale/timezone alignment, then applies screen-
+/// resolution and DPR fixes.  Returns a summary of what was fixed and any
+/// residual violations that require manual intervention.
+#[tauri::command]
+pub fn auto_correct_geo(
+    profile_id: String,
+    proxy_country: String,
+    state: State<'_, AppState>,
+) -> Result<AutoCorrectResult> {
+    let profiles = state.profiles.lock().unwrap();
+    let mut profile = profiles.get(&profile_id)?;
+
+    let seed = profile.fingerprint.seed;
+    let result = GeoValidator::auto_correct(&mut profile.fingerprint, &proxy_country, seed);
+
+    // Persist the corrected fingerprint
+    let req = UpdateProfileRequest {
+        name: None,
+        fingerprint: Some(profile.fingerprint.clone()),
+        human: None,
+        proxy_id: None,
+        notes: None,
+        tags: None,
+        behavior_profile: None,
+    };
+    profiles.update(&profile_id, req)?;
+
+    Ok(result)
+}
+
 // ── Unit Tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

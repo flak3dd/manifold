@@ -10,6 +10,14 @@
 // when the same seed is used.  Every timing and geometry parameter is drawn
 // from the profile's HumanBehavior config so callers never hard-code values.
 //
+// Second-order entropy integration:
+//   All three primitives feed recorded samples into an EntropyTracker.  The
+//   tracker computes live entropy health (velocity kurtosis, IKI histogram
+//   entropy, pause entropy) and returns a varianceMultiplier that is applied
+//   to every subsequent timing draw.  This creates a closed-loop feedback
+//   system that automatically amplifies variance when uniformity is detected,
+//   targeting >5.8 bits/action for velocity and >4.2 bits/action for IKI.
+//
 // Usage:
 //
 //   import { HumanBehaviorMiddleware } from '../human/index.js';
@@ -27,6 +35,12 @@ import type {
   ScrollConfig,
   MacroBehavior,
 } from "../playwright-bridge/types.js";
+import {
+  EntropyTracker,
+  resetSessionTracker,
+  fittsMt,
+  hickRt,
+} from "./entropy.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Seeded PRNG (mulberry32) — same algorithm used in canvas/webrtc evasions
@@ -357,6 +371,7 @@ export class HumanMouse {
     private readonly page: Page,
     private readonly cfg: MouseConfig,
     private readonly rng: Rng,
+    private readonly entropy: EntropyTracker,
   ) {}
 
   /** Move the cursor to (x, y) along a segmented cubic Bézier path.
@@ -367,20 +382,32 @@ export class HumanMouse {
    *   • Inter-move Δt tail index > 1.4  (log-normal step timing with micro-pauses)
    *   • Micro-pause cluster rate  0.08–0.18 pauses/step  (Poisson-clustered)
    */
-  async moveTo(target: Vec2): Promise<void> {
-    const { cfg, rng, page } = this;
+  async moveTo(target: Vec2, targetSizePx = 32, numChoices = 1): Promise<void> {
+    const { cfg, rng, page, entropy } = this;
     const from = { ...this.current };
     const d = dist(from, target);
 
     if (d < 1) return; // already there
 
+    // ── Fitts + Hick pre-move delay ───────────────────────────────────────
+    // Scale pre-action hesitation by target difficulty (Fitts' ID) and
+    // decision complexity (Hick's RT).  This creates realistic inter-click
+    // dependency: small far targets → longer approach time.
+    const preDelay = entropy.fittsHickDelay(d, targetSizePx, numChoices, rng.next());
+    if (preDelay > 60) {
+      await sleep(preDelay * 0.25); // partial pre-move pause
+    }
+
     // ── Velocity mixture model ────────────────────────────────────────────
     // Draws from a 3-component mixture (cruise / burst / hesitation) so
     // the velocity distribution has realistic kurtosis (>5) rather than
     // the near-Gaussian profile of a single log-normal.
+    // Apply entropy variance multiplier to spread the distribution wider
+    // when the tracker detects excessive uniformity.
+    const mult = entropy.velocityMultiplier();
     const speedPx = rng.velocityMixture(
       cfg.base_speed_px_per_sec,
-      cfg.speed_jitter,
+      cfg.speed_jitter * mult,
     );
 
     // ~60 Hz event rate; steps proportional to travel time
@@ -414,6 +441,10 @@ export class HumanMouse {
     // probability (Hawkes process approximation).
     let pauseProb = 0.12;
 
+    // Track previous point for curvature measurement
+    let prevVec: Vec2 | null = null;
+    let prevPt = from;
+
     for (let i = 1; i < pts.length; i++) {
       let { x, y } = pts[i];
 
@@ -427,14 +458,34 @@ export class HumanMouse {
 
       await page.mouse.move(x, y);
 
-      // Per-step timing: log-normal around base
-      const stepDelay = rng.logNormal(baseStepMs, 0.40);
+      // Per-step timing: log-normal around base, scaled by entropy multiplier
+      const stepDelay = rng.logNormal(baseStepMs, 0.40 * mult);
       await sleep(stepDelay);
+
+      // ── Entropy recording ───────────────────────────────────────────────
+      // Record instantaneous velocity for entropy tracker
+      const stepDist = dist(prevPt, { x, y });
+      const stepVelPx = stepDist / Math.max(1, stepDelay) * 1000;
+      entropy.recordVelocity(stepVelPx);
+
+      // Record curvature: angle between consecutive step vectors
+      const curVec: Vec2 = { x: x - prevPt.x, y: y - prevPt.y };
+      if (prevVec !== null) {
+        const magPrev = Math.sqrt(prevVec.x ** 2 + prevVec.y ** 2);
+        const magCur  = Math.sqrt(curVec.x ** 2 + curVec.y ** 2);
+        if (magPrev > 0 && magCur > 0) {
+          const dot = (prevVec.x * curVec.x + prevVec.y * curVec.y) / (magPrev * magCur);
+          entropy.recordCurvature(Math.acos(Math.max(-1, Math.min(1, dot))));
+        }
+      }
+      prevVec = curVec;
+      prevPt = { x, y };
 
       // Clustered micro-pause (Hawkes process)
       if (i < pts.length - 1 && rng.chance(pauseProb)) {
-        const pauseMs = rng.heavyTailPause(95, 0.55, 0.06);
+        const pauseMs = rng.heavyTailPause(95, 0.55 * mult, 0.06);
         await sleep(pauseMs);
+        entropy.recordPause(pauseMs);
         // Elevated probability for the next step (self-excitation)
         pauseProb = Math.min(0.55, pauseProb * 2.8);
       } else {
@@ -455,7 +506,10 @@ export class HumanMouse {
   }
 
   /** Move to the center of an element's bounding box. */
-  async moveToElement(handle: ElementHandle): Promise<Vec2> {
+  async moveToElement(
+    handle: ElementHandle,
+    numChoices = 1,
+  ): Promise<Vec2> {
     const box = await handle.boundingBox();
     if (!box) throw new Error("Element has no bounding box");
 
@@ -464,7 +518,9 @@ export class HumanMouse {
     const x = box.x + box.width * rng.range(0.2, 0.8);
     const y = box.y + box.height * rng.range(0.2, 0.8);
     const target: Vec2 = { x, y };
-    await this.moveTo(target);
+    // Pass element size to Fitts' law and choice count to Hick's law
+    const targetSize = Math.min(box.width, box.height);
+    await this.moveTo(target, targetSize, numChoices);
     return target;
   }
 
@@ -473,19 +529,24 @@ export class HumanMouse {
    * Inter-click time distribution: log-normal pre-click hesitation produces
    * a realistic heavy tail in the inter-click histogram.  Hold duration drawn
    * from a separate log-normal (μ≈110ms) matching empirical click-hold CDFs.
+   *
+   * @param numChoices  number of UI alternatives at the click target (for Hick's law)
    */
-  async click(handle: ElementHandle): Promise<void> {
-    const { cfg, rng, page } = this;
-    const target = await this.moveToElement(handle);
+  async click(handle: ElementHandle, numChoices = 1): Promise<void> {
+    const { cfg, rng, page, entropy } = this;
+    const target = await this.moveToElement(handle, numChoices);
 
-    // Pre-click hesitation: log-normal so the tail matches real CDF
+    // Pre-click hesitation: log-normal so the tail matches real CDF.
+    // Scale by entropy variance multiplier to maintain healthy pause entropy.
+    const mult = entropy.velocityMultiplier();
     if (cfg.pre_click_pause_max_ms > 0) {
       const mean = cfg.pre_click_pause_max_ms * 0.35;
       const pause = Math.min(
-        cfg.pre_click_pause_max_ms,
-        rng.logNormal(mean, 0.60),
+        cfg.pre_click_pause_max_ms * mult,
+        rng.logNormal(mean, 0.60 * mult),
       );
       await sleep(pause);
+      entropy.recordPause(pause);
     }
 
     // Occasional "second thought" micro-lift before pressing (2% of clicks)
@@ -494,7 +555,9 @@ export class HumanMouse {
         target.x + rng.range(-3, 3),
         target.y + rng.range(-2, 2),
       );
-      await sleep(rng.logNormal(180, 0.50));
+      const microPause = rng.logNormal(180, 0.50);
+      await sleep(microPause);
+      entropy.recordPause(microPause);
     }
 
     // Hold duration: log-normal around 110 ms (matches Fitts-law studies)
@@ -503,6 +566,14 @@ export class HumanMouse {
     await page.mouse.down();
     await sleep(holdMs);
     await page.mouse.up();
+
+    // ── Post-click inter-click dependency ─────────────────────────────────
+    // Record the click and apply the recommended post-click recovery pause.
+    // This models fatigue accumulation in inter-click dependency chains.
+    const recoveryMs = entropy.afterClick(holdMs);
+    if (recoveryMs > 20) {
+      await sleep(rng.logNormal(recoveryMs, 0.35));
+    }
 
     this.current = target;
   }
@@ -526,6 +597,7 @@ export class HumanKeyboard {
     private readonly page: Page,
     private readonly cfg: TypingConfig,
     private readonly rng: Rng,
+    private readonly entropy: EntropyTracker,
   ) {}
 
   /** Type a single character with realistic key-hold timing.
@@ -539,10 +611,14 @@ export class HumanKeyboard {
    * measurably from the Gaussian/uniform models detectable by 2026 WAFs.
    */
   private async typeChar(ch: string, baseDelayMs: number): Promise<void> {
-    const { page, rng } = this;
+    const { page, rng, entropy } = this;
+
+    // Apply entropy variance multiplier to IKI spread — if the histogram
+    // is becoming too uniform, widen the log-normal sigma automatically.
+    const mult = entropy.velocityMultiplier();
 
     // IKI from log-normal — right-skewed, heavier tail than Gaussian
-    const iki = Math.max(18, rng.logNormal(baseDelayMs, 0.42));
+    const iki = Math.max(18, rng.logNormal(baseDelayMs, 0.42 * mult));
 
     // Key-hold time: shorter, separate log-normal
     const holdMs = Math.max(12, rng.logNormal(Math.min(80, baseDelayMs * 0.55), 0.30));
@@ -557,7 +633,11 @@ export class HumanKeyboard {
 
     await page.keyboard.type(ch, { delay: holdMs });
     // Inter-keystroke gap after the key (IKI - hold time, floored at 8 ms)
-    await sleep(Math.max(8, iki - holdMs));
+    const gap = Math.max(8, iki - holdMs);
+    await sleep(gap);
+
+    // Record IKI sample for entropy tracking (IKI = hold + gap)
+    entropy.recordIki(holdMs + gap);
   }
 
   /** Type `text` with burst/pause rhythm and occasional typos.
@@ -574,12 +654,18 @@ export class HumanKeyboard {
    *     matches empirical typing studies (σ_log ≈ 0.12–0.18)
    */
   async type(text: string, preFocusPause = true): Promise<void> {
-    const { cfg, rng } = this;
+    const { cfg, rng, entropy } = this;
 
-    // Pre-field thinking pause (log-normal, not uniform range)
+    // Pre-field thinking pause (log-normal, not uniform range).
+    // Scale pause sigma by entropy multiplier so pause histogram stays varied.
+    const mult = entropy.velocityMultiplier();
     if (preFocusPause && cfg.think_before_long_fields && text.length > 10) {
       const mean = (cfg.think_pause_min_ms + cfg.think_pause_max_ms) / 2;
-      await sleep(rng.logNormal(mean, 0.38));
+      // Hick's law component: longer fields = more planning time
+      const hickComponent = hickRt(Math.ceil(text.length / 5));
+      const thinkMs = rng.logNormal(mean + hickComponent * 0.3, 0.38 * mult);
+      await sleep(thinkMs);
+      entropy.recordPause(thinkMs);
     }
 
     // Session WPM: log-normal so speed has realistic between-session variance
@@ -636,10 +722,26 @@ export class HumanKeyboard {
         i++;
       }
 
-      // Inter-burst pause: heavy-tailed log-normal with 4% Pareto tail
+      // Inter-burst pause: heavy-tailed log-normal with 4% Pareto tail.
+      // Scale sigma by entropy multiplier to maintain pause histogram entropy.
       if (i < text.length) {
         const pauseMean = (cfg.pause_min_ms + cfg.pause_max_ms) / 2;
-        await sleep(rng.heavyTailPause(pauseMean, 0.48, 0.04));
+        const pauseMs = rng.heavyTailPause(pauseMean, 0.48 * mult, 0.04);
+        await sleep(pauseMs);
+        entropy.recordPause(pauseMs);
+      }
+    }
+
+    // ── Periodic entropy health check ───────────────────────────────────────
+    // After typing, if enough samples have accumulated, run the entropy
+    // report to update the variance multiplier for subsequent actions.
+    if (entropy['ikiHist' as keyof typeof entropy] !== undefined) {
+      // Use duck-typing to avoid exposing private fields; report() is public.
+      if ((entropy as EntropyTracker).report !== undefined) {
+        const report = (entropy as EntropyTracker).report();
+        if (process.env.MANIFOLD_DEBUG === '1' && report.flags.length > 0) {
+          console.info('[manifold/entropy]', report.flags.join(' | '));
+        }
       }
     }
   }
@@ -668,6 +770,7 @@ export class HumanScroll {
     private readonly page: Page,
     private readonly cfg: ScrollConfig,
     private readonly rng: Rng,
+    private readonly entropy: EntropyTracker,
   ) {}
 
   /** Scroll at the given position by `totalDeltaY` pixels with momentum decay. */
@@ -730,9 +833,12 @@ export class HumanBehaviorMiddleware {
   public readonly mouse: HumanMouse;
   public readonly keyboard: HumanKeyboard;
   public readonly scroll: HumanScroll;
+  public readonly entropy: EntropyTracker;
 
   private readonly rng: Rng;
   private readonly macro: MacroBehavior;
+  private _actionCount = 0;
+  private static readonly ENTROPY_REPORT_INTERVAL = 50;
 
   constructor(
     private readonly page: Page,
@@ -741,25 +847,30 @@ export class HumanBehaviorMiddleware {
   ) {
     this.rng = new Rng(seed);
     this.macro = cfg.macro_b;
-    this.mouse = new HumanMouse(page, cfg.mouse, this.rng);
-    this.keyboard = new HumanKeyboard(page, cfg.typing, this.rng);
-    this.scroll = new HumanScroll(page, cfg.scroll, this.rng);
+    this.entropy = resetSessionTracker();
+    this.mouse = new HumanMouse(page, cfg.mouse, this.rng, this.entropy);
+    this.keyboard = new HumanKeyboard(page, cfg.typing, this.rng, this.entropy);
+    this.scroll = new HumanScroll(page, cfg.scroll, this.rng, this.entropy);
   }
 
   // ── High-level actions ──────────────────────────────────────────────────
 
-  /** Locate a CSS selector, move the mouse to it, and click. */
-  async click(selector: string): Promise<void> {
+  /**
+   * Locate a CSS selector, move the mouse to it, and click.
+   * @param numChoices  number of UI alternatives at this click target (Hick's law)
+   */
+  async click(selector: string, numChoices = 1): Promise<void> {
     await this._maybeIdlePause();
 
     const handle = await this.page.$(selector);
     if (!handle) throw new Error(`HumanClick: selector not found: ${selector}`);
 
     await handle.scrollIntoViewIfNeeded();
-    await this.mouse.click(handle);
+    await this.mouse.click(handle, numChoices);
     await handle.dispose();
 
     await this._interActionPause();
+    this._maybeReportEntropy();
   }
 
   /** Focus a field and type text with human rhythm. */
@@ -783,6 +894,7 @@ export class HumanBehaviorMiddleware {
 
     await handle.dispose();
     await this._interActionPause();
+    this._maybeReportEntropy();
   }
 
   /** Scroll a container element by deltaY pixels. */
@@ -854,9 +966,12 @@ export class HumanBehaviorMiddleware {
     }
   }
 
-  /** Pause that simulates waiting for a page to finish loading. */
+  /** Pause that simulates waiting for a page to finish loading.
+   *  Also notifies the entropy tracker so fatigue state is reset and
+   *  the action counter restarts from the "fresh page" baseline. */
   async pageLoadPause(): Promise<void> {
     const { macro, rng } = this;
+    this.entropy.onPageLoad();
     await sleep(
       rng.range(macro.page_load_pause_min_ms, macro.page_load_pause_max_ms),
     );
@@ -875,6 +990,32 @@ export class HumanBehaviorMiddleware {
     const { macro, rng } = this;
     if (rng.chance(macro.idle_pause_prob)) {
       await sleep(rng.range(macro.idle_pause_min_ms, macro.idle_pause_max_ms));
+    }
+  }
+
+  /**
+   * Runs the entropy health report every ENTROPY_REPORT_INTERVAL actions.
+   * Emits a debug log if any flags are raised.  The returned report also
+   * updates the variance multiplier inside the EntropyTracker so subsequent
+   * actions automatically use wider timing distributions if entropy is low.
+   */
+  private _maybeReportEntropy(): void {
+    this._actionCount++;
+    if (this._actionCount % HumanBehaviorMiddleware.ENTROPY_REPORT_INTERVAL !== 0) return;
+
+    const report = this.entropy.report();
+    if (process.env.MANIFOLD_DEBUG === '1') {
+      if (report.flags.length > 0) {
+        console.info(
+          `[manifold/entropy] actions=${this._actionCount} ` +
+          `health=${(report.healthScore * 100).toFixed(0)}% ` +
+          `velH=${report.velocityEntropy.toFixed(2)}bits ` +
+          `ikiH=${report.ikiEntropy.toFixed(2)}bits ` +
+          `kurt=${report.velocityKurtosis.toFixed(2)} ` +
+          `mult=x${report.varianceMultiplier.toFixed(2)} ` +
+          `flags=[${report.flags.join(', ')}]`
+        );
+      }
     }
   }
 }

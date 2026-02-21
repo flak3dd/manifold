@@ -4,6 +4,7 @@ mod commands;
 mod db;
 mod error;
 mod fingerprint;
+mod geo_validator;
 mod human;
 mod profile;
 mod proxy;
@@ -68,6 +69,9 @@ pub fn run() {
             commands::get_app_info,
             // ── Form scraper ──────────────────────────────────────────────────
             commands::scrape_form_selectors,
+            // ── Geo consistency ───────────────────────────────────────────────
+            commands::validate_geo_consistency,
+            commands::auto_correct_geo,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Manifold");
