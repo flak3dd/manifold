@@ -616,6 +616,7 @@ mod tests {
                     notes: None,
                     tags: None,
                     behavior_profile: None,
+                    tls_bridge: None,
                 },
             )
             .unwrap();
@@ -637,6 +638,7 @@ mod tests {
                 notes: Some("updated note".into()),
                 tags: Some(vec!["new_tag".into()]),
                 behavior_profile: None,
+                tls_bridge: None,
             },
         )
         .unwrap();
@@ -661,6 +663,7 @@ mod tests {
                 notes: None,
                 tags: None,
                 behavior_profile: None,
+                tls_bridge: None,
             },
         )
         .unwrap();
@@ -682,6 +685,7 @@ mod tests {
                     notes: None,
                     tags: None,
                     behavior_profile: None,
+                    tls_bridge: None,
                 },
             )
             .unwrap_err();
@@ -702,6 +706,7 @@ mod tests {
                 notes: None,
                 tags: None,
                 behavior_profile: Some("bot".into()),
+                tls_bridge: None,
             },
         )
         .unwrap();
@@ -841,6 +846,7 @@ mod tests {
                 notes: None,
                 tags: None,
                 behavior_profile: None,
+                tls_bridge: None,
             },
         )
         .unwrap();

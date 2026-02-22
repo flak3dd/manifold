@@ -1,0 +1,137 @@
+{
+  "targetUrl": "https://joefortunepokies.win",
+  "startTime": "2026-02-22T00:50:09.318Z",
+  "endTime": "2026-02-22T00:51:20.250Z",
+  "durationMs": 70932,
+  "totalCredentialPairs": 3,
+  "totalAttempts": 12,
+  "results": [
+    {
+      "email": "test@example.com",
+      "label": "Test Account 1",
+      "attempts": [
+        {
+          "attemptNumber": 1,
+          "timestamp": "2026-02-22T00:50:18.663Z",
+          "errorMessage": null,
+          "errorSelector": null,
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_rrzyk4j1-test_example_com-attempt1.png"
+        },
+        {
+          "attemptNumber": 2,
+          "timestamp": "2026-02-22T00:50:20.999Z",
+          "errorMessage": null,
+          "errorSelector": null,
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_rrzyk4j1-test_example_com-attempt2.png"
+        },
+        {
+          "attemptNumber": 3,
+          "timestamp": "2026-02-22T00:50:23.310Z",
+          "errorMessage": "errorError",
+          "errorSelector": "[class*=\"error\"]",
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_rrzyk4j1-test_example_com-attempt3.png"
+        },
+        {
+          "attemptNumber": 4,
+          "timestamp": "2026-02-22T00:50:28.684Z",
+          "errorMessage": null,
+          "errorSelector": null,
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_rrzyk4j1-test_example_com-attempt4.png"
+        }
+      ],
+      "totalAttempts": 4,
+      "uniqueErrors": [
+        "errorError"
+      ],
+      "success": false
+    },
+    {
+      "email": "user@test.com",
+      "label": "Test Account 2",
+      "attempts": [
+        {
+          "attemptNumber": 1,
+          "timestamp": "2026-02-22T00:50:39.180Z",
+          "errorMessage": null,
+          "errorSelector": null,
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_rrzyk4j1-user_test_com-attempt1.png"
+        },
+        {
+          "attemptNumber": 2,
+          "timestamp": "2026-02-22T00:50:42.951Z",
+          "errorMessage": null,
+          "errorSelector": null,
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_rrzyk4j1-user_test_com-attempt2.png"
+        },
+        {
+          "attemptNumber": 3,
+          "timestamp": "2026-02-22T00:50:45.320Z",
+          "errorMessage": null,
+          "errorSelector": null,
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_rrzyk4j1-user_test_com-attempt3.png"
+        },
+        {
+          "attemptNumber": 4,
+          "timestamp": "2026-02-22T00:50:47.697Z",
+          "errorMessage": null,
+          "errorSelector": null,
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_rrzyk4j1-user_test_com-attempt4.png"
+        }
+      ],
+      "totalAttempts": 4,
+      "uniqueErrors": [],
+      "success": false
+    },
+    {
+      "email": "invalid@email.com",
+      "label": "Invalid Credentials",
+      "attempts": [
+        {
+          "attemptNumber": 1,
+          "timestamp": "2026-02-22T00:51:03.661Z",
+          "errorMessage": null,
+          "errorSelector": null,
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_rrzyk4j1-invalid_email_com-attempt1.png"
+        },
+        {
+          "attemptNumber": 2,
+          "timestamp": "2026-02-22T00:51:06.421Z",
+          "errorMessage": "errorError",
+          "errorSelector": "[class*=\"error\"]",
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_rrzyk4j1-invalid_email_com-attempt2.png"
+        },
+        {
+          "attemptNumber": 3,
+          "timestamp": "2026-02-22T00:51:11.664Z",
+          "errorMessage": "errorError",
+          "errorSelector": "[class*=\"error\"]",
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_rrzyk4j1-invalid_email_com-attempt3.png"
+        },
+        {
+          "attemptNumber": 4,
+          "timestamp": "2026-02-22T00:51:16.832Z",
+          "errorMessage": "errorError",
+          "errorSelector": "[class*=\"error\"]",
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_rrzyk4j1-invalid_email_com-attempt4.png"
+        }
+      ],
+      "totalAttempts": 4,
+      "uniqueErrors": [
+        "errorError"
+      ],
+      "success": false
+    }
+  ]
+}

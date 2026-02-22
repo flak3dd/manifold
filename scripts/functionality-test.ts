@@ -1024,51 +1024,58 @@ async function main(): Promise<void> {
 
   log("test", "14 — JavaScript Execution & Page Interactivity");
   {
-    const jsCheck = await page.evaluate(() => {
-      try {
-        // Basic JS execution
-        const mathOk = Math.random() >= 0;
-        const dateOk = new Date().getTime() > 0;
-        const jsonOk = JSON.parse('{"ok":true}').ok === true;
-
-        // DOM manipulation
-        const testDiv = document.createElement("div");
-        testDiv.id = "__manifold_test__";
-        testDiv.style.display = "none";
-        document.body.appendChild(testDiv);
-        const domOk = !!document.getElementById("__manifold_test__");
-        testDiv.remove();
-
-        // LocalStorage
-        let storageOk = false;
+    const jsCheck = await page.evaluate(
+      ():
+        | { success: true; checks: Record<string, boolean> }
+        | { success: false; error: string } => {
         try {
-          localStorage.setItem("__manifold_test__", "1");
-          storageOk = localStorage.getItem("__manifold_test__") === "1";
-          localStorage.removeItem("__manifold_test__");
-        } catch {
-          storageOk = false;
+          // Basic JS execution
+          const mathOk = Math.random() >= 0;
+          const dateOk = new Date().getTime() > 0;
+          const jsonOk = JSON.parse('{"ok":true}').ok === true;
+
+          // DOM manipulation
+          const testDiv = document.createElement("div");
+          testDiv.id = "__manifold_test__";
+          testDiv.style.display = "none";
+          document.body.appendChild(testDiv);
+          const domOk = !!document.getElementById("__manifold_test__");
+          testDiv.remove();
+
+          // LocalStorage
+          let storageOk = false;
+          try {
+            localStorage.setItem("__manifold_test__", "1");
+            storageOk = localStorage.getItem("__manifold_test__") === "1";
+            localStorage.removeItem("__manifold_test__");
+          } catch {
+            storageOk = false;
+          }
+
+          // Fetch API available
+          const fetchOk = typeof fetch === "function";
+
+          // WebSocket available
+          const wsOk = typeof WebSocket === "function";
+
+          return {
+            success: true,
+            checks: { mathOk, dateOk, jsonOk, domOk, storageOk, fetchOk, wsOk },
+          };
+        } catch (e) {
+          return { success: false, error: String(e) };
         }
+      },
+    );
 
-        // Fetch API available
-        const fetchOk = typeof fetch === "function";
-
-        // WebSocket available
-        const wsOk = typeof WebSocket === "function";
-
-        return { mathOk, dateOk, jsonOk, domOk, storageOk, fetchOk, wsOk };
-      } catch (e) {
-        return { error: String(e) };
-      }
-    });
-
-    if ("error" in jsCheck) {
+    if (!jsCheck.success) {
       results.push({
         name: "JS Execution",
         status: "FAIL",
-        detail: `Error: ${(jsCheck as any).error}`,
+        detail: `Error: ${jsCheck.error}`,
       });
     } else {
-      const checks = jsCheck as Record<string, boolean>;
+      const checks = jsCheck.checks;
       const allOk = Object.values(checks).every(Boolean);
       const details = Object.entries(checks)
         .map(([k, v]) => `${k}:${v ? "✓" : "✗"}`)

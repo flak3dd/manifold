@@ -1,0 +1,63 @@
+{
+  "targetUrl": "https://joefortunepokies.win",
+  "startTime": "2026-02-22T00:56:28.798Z",
+  "endTime": "2026-02-22T00:56:45.622Z",
+  "durationMs": 16824,
+  "totalCredentialPairs": 3,
+  "totalAttempts": 12,
+  "results": [
+    {
+      "email": "test@example.com",
+      "label": "Test Account 1",
+      "attempts": [
+        {
+          "attemptNumber": 1,
+          "timestamp": "2026-02-22T00:56:34.759Z",
+          "errorMessage": null,
+          "errorSelector": null,
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_3d0y3e4n-test_example_com-attempt1.png"
+        },
+        {
+          "attemptNumber": 2,
+          "timestamp": "2026-02-22T00:56:37.093Z",
+          "errorMessage": "EXCEPTION: Error: page.$: Target crashed ",
+          "errorSelector": null,
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": null
+        },
+        {
+          "attemptNumber": 3,
+          "timestamp": "2026-02-22T00:56:37.095Z",
+          "errorMessage": "EXCEPTION: Error: page.$: Target crashed ",
+          "errorSelector": null,
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": null
+        },
+        {
+          "attemptNumber": 4,
+          "timestamp": "2026-02-22T00:56:37.096Z",
+          "errorMessage": "EXCEPTION: Error: page.$: Target crashed ",
+          "errorSelector": null,
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": null
+        }
+      ],
+      "totalAttempts": 4,
+      "uniqueErrors": [],
+      "success": false
+    },
+    {
+      "email": "user@test.com",
+      "label": "Test Account 2",
+      "attempts": [],
+      "totalAttempts": 4,
+      "uniqueErrors": [],
+      "success": false
+    }
+  ],
+  "proxySessions": [
+    "bx1rxtb4",
+    "pjgrlo3o"
+  ]
+}

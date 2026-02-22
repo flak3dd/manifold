@@ -1,0 +1,150 @@
+{
+  "targetUrl": "https://joefortunepokies.win",
+  "startTime": "2026-02-22T01:10:01.826Z",
+  "endTime": "2026-02-22T01:12:33.682Z",
+  "durationMs": 151856,
+  "totalCredentialPairs": 3,
+  "totalAttempts": 12,
+  "results": [
+    {
+      "email": "test@example.com",
+      "label": "Test Account 1",
+      "attempts": [
+        {
+          "attemptNumber": 1,
+          "timestamp": "2026-02-22T01:10:30.253Z",
+          "errorMessage": null,
+          "errorSelector": null,
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_l972y232-test_example_com-attempt1.png"
+        },
+        {
+          "attemptNumber": 2,
+          "timestamp": "2026-02-22T01:10:34.654Z",
+          "errorMessage": "Oops! Your email and/or password are incorrect. Please check that your CAPS lock is not on and try again.",
+          "errorSelector": ".ol-alert__description",
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_l972y232-test_example_com-attempt2.png"
+        },
+        {
+          "attemptNumber": 3,
+          "timestamp": "2026-02-22T01:10:41.027Z",
+          "errorMessage": "Your email and/or password remain incorrect. Further failed attempts may result in your account being blocked. To log in please click on Forgot Password  and follow the steps.",
+          "errorSelector": ".ol-alert__description",
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_l972y232-test_example_com-attempt3.png"
+        },
+        {
+          "attemptNumber": 4,
+          "timestamp": "2026-02-22T01:10:45.080Z",
+          "errorMessage": "Your email and/or password remain incorrect. Further failed attempts may result in your account being blocked. To log in please click on Forgot Password  and follow the steps.",
+          "errorSelector": ".ol-alert__description",
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_l972y232-test_example_com-attempt4.png"
+        }
+      ],
+      "totalAttempts": 4,
+      "uniqueErrors": [
+        "Oops! Your email and/or password are incorrect. Please check that your CAPS lock is not on and try again.",
+        "Your email and/or password remain incorrect. Further failed attempts may result in your account being blocked. To log in please click on Forgot Password  and follow the steps."
+      ],
+      "success": false,
+      "proxySession": "xp0ugatz"
+    },
+    {
+      "email": "user@test.com",
+      "label": "Test Account 2",
+      "attempts": [
+        {
+          "attemptNumber": 1,
+          "timestamp": "2026-02-22T01:11:35.793Z",
+          "errorMessage": null,
+          "errorSelector": null,
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_l972y232-user_test_com-attempt1.png"
+        },
+        {
+          "attemptNumber": 2,
+          "timestamp": "2026-02-22T01:11:40.733Z",
+          "errorMessage": "Oops! Your email and/or password are incorrect. Please check that your CAPS lock is not on and try again.",
+          "errorSelector": ".ol-alert__description",
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_l972y232-user_test_com-attempt2.png"
+        },
+        {
+          "attemptNumber": 3,
+          "timestamp": "2026-02-22T01:11:44.871Z",
+          "errorMessage": "Your email and/or password remain incorrect. Further failed attempts may result in your account being blocked. To log in please click on Forgot Password  and follow the steps.",
+          "errorSelector": ".ol-alert__description",
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_l972y232-user_test_com-attempt3.png"
+        },
+        {
+          "attemptNumber": 4,
+          "timestamp": "2026-02-22T01:11:49.119Z",
+          "errorMessage": "Your email and/or password remain incorrect. Further failed attempts may result in your account being blocked. To log in please click on Forgot Password  and follow the steps.",
+          "errorSelector": ".ol-alert__description",
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_l972y232-user_test_com-attempt4.png"
+        }
+      ],
+      "totalAttempts": 4,
+      "uniqueErrors": [
+        "Oops! Your email and/or password are incorrect. Please check that your CAPS lock is not on and try again.",
+        "Your email and/or password remain incorrect. Further failed attempts may result in your account being blocked. To log in please click on Forgot Password  and follow the steps."
+      ],
+      "success": false,
+      "proxySession": "af5da6uc"
+    },
+    {
+      "email": "invalid@email.com",
+      "label": "Invalid Credentials",
+      "attempts": [
+        {
+          "attemptNumber": 1,
+          "timestamp": "2026-02-22T01:12:19.243Z",
+          "errorMessage": null,
+          "errorSelector": null,
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_l972y232-invalid_email_com-attempt1.png"
+        },
+        {
+          "attemptNumber": 2,
+          "timestamp": "2026-02-22T01:12:23.765Z",
+          "errorMessage": "Oops! Your email and/or password are incorrect. Please check that your CAPS lock is not on and try again.",
+          "errorSelector": ".ol-alert__description",
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_l972y232-invalid_email_com-attempt2.png"
+        },
+        {
+          "attemptNumber": 3,
+          "timestamp": "2026-02-22T01:12:28.243Z",
+          "errorMessage": "Your email and/or password remain incorrect. Further failed attempts may result in your account being blocked. To log in please click on Forgot Password  and follow the steps.",
+          "errorSelector": ".ol-alert__description",
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_l972y232-invalid_email_com-attempt3.png"
+        },
+        {
+          "attemptNumber": 4,
+          "timestamp": "2026-02-22T01:12:31.788Z",
+          "errorMessage": "Your email and/or password remain incorrect. Further failed attempts may result in your account being blocked. To log in please click on Forgot Password  and follow the steps.",
+          "errorSelector": ".ol-alert__description",
+          "pageUrl": "https://www.joefortunepokies.win/login",
+          "screenshotPath": "screenshot-login_test_l972y232-invalid_email_com-attempt4.png"
+        }
+      ],
+      "totalAttempts": 4,
+      "uniqueErrors": [
+        "Oops! Your email and/or password are incorrect. Please check that your CAPS lock is not on and try again.",
+        "Your email and/or password remain incorrect. Further failed attempts may result in your account being blocked. To log in please click on Forgot Password  and follow the steps."
+      ],
+      "success": false,
+      "proxySession": "uixv7e9g"
+    }
+  ],
+  "proxySessions": [
+    "xp0ugatz",
+    "af5da6uc",
+    "uixv7e9g"
+  ]
+}

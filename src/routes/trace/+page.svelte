@@ -264,7 +264,7 @@
 
             // Import traces using the trace importer
             const { importTraceDataset } =
-                await import("../../human/trace/importer.js");
+                await import("../../../human/trace/importer.ts");
             const datasetMap = {
                 "attentive-cursor":
                     "https://example.com/attentive-cursor-dataset.json", // Placeholder URLs

@@ -300,6 +300,8 @@ export interface QuickPreset {
     webrtc_mode?: import("$lib/types").WebRtcMode;
   };
   behavior_profile: import("$lib/types").BehaviorProfile;
+  /** Enable TLS bridge for JA4 fingerprinting control */
+  tls_bridge?: boolean;
 }
 
 export const QUICK_PRESETS: QuickPreset[] = [

@@ -1,7 +1,7 @@
 {
   "url": "https://joefortunepokies.win",
-  "timestamp": "2026-02-21T06:41:39.489Z",
-  "durationMs": 20390,
+  "timestamp": "2026-02-22T00:45:48.815Z",
+  "durationMs": 23683,
   "summary": {
     "PASS": 18,
     "WARN": 3,
@@ -13,8 +13,8 @@
     {
       "name": "Page Load",
       "status": "PASS",
-      "detail": "HTTP 200  in 5632ms",
-      "durationMs": 5632
+      "detail": "HTTP 200  in 3308ms",
+      "durationMs": 3308
     },
     {
       "name": "SSL/HTTPS",
@@ -30,7 +30,7 @@
       "name": "CAPTCHA Detection",
       "status": "WARN",
       "detail": "Detected: reCAPTCHA",
-      "durationMs": 123
+      "durationMs": 112
     },
     {
       "name": "WAF Detection",
@@ -51,7 +51,7 @@
       "name": "Form Detection",
       "status": "PASS",
       "detail": "Found 1 form(s) on page",
-      "durationMs": 18
+      "durationMs": 29
     },
     {
       "name": "Form #0 (REGISTRATION)",
@@ -76,7 +76,7 @@
     {
       "name": "Page Links",
       "status": "PASS",
-      "detail": "Total: 134 | External scripts: 21"
+      "detail": "Total: 134 | External scripts: 15"
     },
     {
       "name": "Auth-Related Links",
@@ -86,12 +86,12 @@
     {
       "name": "Cookies",
       "status": "INFO",
-      "detail": "Total: 11 | Names: LANG, VISITED, Device-Type, variant, AB, randMktUserId, gtm_page_view, jftcusttype, _pk_id.8.b30a, _pk_ses.8.b30a, st"
+      "detail": "Total: 13 | Names: LANG, VISITED, Device-Type, variant, AB, randMktUserId, gtm_page_view, jftcusttype, _pk_id.8.b30a, _pk_ses.8.b30a, _hjSessionUser_510352, st, _hjSession_510352"
     },
     {
       "name": "Trackers Detected",
       "status": "INFO",
-      "detail": "None identified"
+      "detail": "Hotjar, Session"
     },
     {
       "name": "Page Title",
@@ -126,22 +126,22 @@
     {
       "name": "Network Requests",
       "status": "PASS",
-      "detail": "Total: 210 | Failed: 1 | image:114, script:67, document:8, font:8, other:6, fetch:4, stylesheet:2, ping:1"
+      "detail": "Total: 240 | Failed: 2 | image:115, script:79, other:11, font:11, document:10, fetch:7, stylesheet:4, xhr:2, ping:1"
     },
     {
       "name": "Third-Party Domains",
       "status": "INFO",
-      "detail": "3 domain(s): idg.joefortune.com, www.deviceprotect.eu, www.googletagmanager.com"
+      "detail": "12 domain(s): api.wicket-keeper.com, fonts.googleapis.com, fonts.gstatic.com, games.glovefrog.plus, idg.joefortune.com, policy.app.cookieinformation.com, script.hotjar.com, static.hotjar.com, www.deviceprotect.eu, www.googletagmanager.com, www.gstatic.com, www.recaptcha.net"
     },
     {
       "name": "Console Errors",
       "status": "INFO",
-      "detail": "Errors: 1 | Warnings: 1 | Total messages: 2"
+      "detail": "Errors: 1 | Warnings: 2 | Total messages: 8"
     },
     {
       "name": "Top Console Errors",
       "status": "INFO",
-      "detail": "Failed to load resource: net::ERR_CERT_COMMON_NAME_INVALID"
+      "detail": "TypeError: Failed to fetch\n    at window.fetch (https://www.joefortunepokies.win/assets/_next/static/chunks/app/%5Blocal"
     },
     {
       "name": "navigator.webdriver",
@@ -166,8 +166,8 @@
     {
       "name": "Login Navigation",
       "status": "PASS",
-      "detail": "Clicked login link → https://www.joefortunepokies.win/login (2213ms)",
-      "durationMs": 2213
+      "detail": "Clicked login link → https://www.joefortunepokies.win/login (4428ms)",
+      "durationMs": 4428
     },
     {
       "name": "Login Form Present",

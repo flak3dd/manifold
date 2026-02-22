@@ -208,6 +208,7 @@ export interface UpdateProfilePayload {
   notes?: string;
   tags?: string[];
   behavior_profile?: BehaviorProfile;
+  tls_bridge?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
