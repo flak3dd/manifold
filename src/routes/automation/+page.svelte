@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount } from "svelte";
+    import { toast } from "svelte-sonner";
     import { profileStore } from "$lib/stores/profiles.svelte";
     import { proxyStore } from "$lib/stores/proxy.svelte";
     import { automationStore } from "$lib/stores/automation.svelte";
@@ -349,8 +350,12 @@
         });
 
         automationStore.clearDrafts();
-        automationStore.startRun(run.id);
-        activeTab = "run";
+        const result = automationStore.startRun(run.id);
+        if (result.success) {
+            activeTab = "run";
+        } else {
+            toast.error(result.error ?? "Failed to start automation run");
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
