@@ -321,7 +321,7 @@
         try {
             // Import calibrator and apply to synthetic trace data
             const { calibrateFromTraces } =
-                await import("../../human/trace/calibrator.js");
+                await import("../../../human/trace/calibrator.ts");
 
             // Generate synthetic trace data for demonstration
             const syntheticTraces = Array.from({ length: 50 }, (_, i) => ({

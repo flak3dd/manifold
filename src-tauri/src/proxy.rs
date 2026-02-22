@@ -390,7 +390,8 @@ impl ProxyRepo {
         }
     }
 
-    /// HTTP CONNECT tunnel check.
+    /// HTTP proxy check using standard GET request (not CONNECT tunnel).
+    /// This works with residential/mobile proxies that don't support CONNECT.
     fn http_connect_check(
         mut stream: std::net::TcpStream,
         proxy: &Proxy,
@@ -399,8 +400,10 @@ impl ProxyRepo {
     ) -> std::result::Result<u32, String> {
         use std::io::{BufRead, BufReader, Write};
 
-        // Issue CONNECT
-        let mut req = format!("CONNECT {target}:80 HTTP/1.1\r\nHost: {target}:80\r\n");
+        // Use standard HTTP GET through proxy (absolute URI form)
+        // This is more compatible with residential/mobile proxies than CONNECT
+        let mut req =
+            format!("GET http://{target}/ HTTP/1.1\r\nHost: {target}\r\nConnection: close\r\n");
         if let (Some(user), Some(pass)) = (&proxy.username, &proxy.password) {
             use base64::Engine;
             let creds = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"));
@@ -410,24 +413,32 @@ impl ProxyRepo {
 
         stream
             .write_all(req.as_bytes())
-            .map_err(|e| format!("write CONNECT: {e}"))?;
+            .map_err(|e| format!("write HTTP request: {e}"))?;
 
         // Read response line
         let mut reader = BufReader::new(&stream);
         let mut line = String::new();
         reader
             .read_line(&mut line)
-            .map_err(|e| format!("read CONNECT response: {e}"))?;
+            .map_err(|e| format!("read HTTP response: {e}"))?;
 
-        if !line.contains("200") {
-            return Err(format!("CONNECT rejected: {}", line.trim()));
+        // Accept any 2xx or 3xx status as healthy
+        // Common responses: 200 OK, 301/302 redirects
+        if !line.contains(" 2") && !line.contains(" 3") {
+            // Check for proxy auth errors specifically
+            if line.contains("407") {
+                return Err("Proxy authentication failed (407)".into());
+            }
+            if line.contains("403") {
+                return Err("Proxy access forbidden (403)".into());
+            }
+            return Err(format!("HTTP request failed: {}", line.trim()));
         }
 
-        // Drain headers
+        // Drain remaining response
         loop {
             let mut h = String::new();
-            reader.read_line(&mut h).ok();
-            if h == "\r\n" || h.is_empty() {
+            if reader.read_line(&mut h).unwrap_or(0) == 0 || h == "\r\n" {
                 break;
             }
         }
