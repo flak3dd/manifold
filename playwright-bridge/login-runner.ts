@@ -45,6 +45,12 @@ import {
   TLS_PATCH_ARGS,
   computeRunStats,
 } from "./login-types.js";
+import {
+  FingerprintRotationManager,
+  rotateToUniqueFingerprint,
+  validateFingerprintUniqueness,
+  type RotationResult,
+} from "./fingerprint-rotator.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Utilities
@@ -1154,8 +1160,9 @@ export class LoginRunner {
   private _run: LoginRun | null = null;
   private _paused = false;
   private _aborted = false;
-  private _softSignalCounts: Map<string, number> = new Map();
+  private _softSignalCounts = new Map<string, number>();
   private _consecutiveFailures = 0;
+  private _fingerprintRotator: FingerprintRotationManager;
 
   // ── Adaptive WAF aggression closed-loop ───────────────────────────────────
   // Starts at 1.0 (baseline noise).  Each WAF signal multiplies by 1.4×
@@ -1179,7 +1186,13 @@ export class LoginRunner {
       healthy: boolean;
     }>,
     private readonly broadcast: BroadcastFn,
-  ) {}
+  ) {
+    // Initialize fingerprint rotation manager with AmIUnique-style validation
+    this._fingerprintRotator = new FingerprintRotationManager({
+      minUniquenessScore: 60, // Require score >= 60 for uniqueness
+      maxSimilarity: 0.3, // Fingerprints must be < 30% similar to previous ones
+    });
+  }
 
   // ── Public API ────────────────────────────────────────────────────────────
 
@@ -1189,6 +1202,15 @@ export class LoginRunner {
     this._aborted = false;
     this._softSignalCounts.clear();
     this._consecutiveFailures = 0;
+
+    // Reset fingerprint rotator for new run and seed with initial profile fingerprints
+    this._fingerprintRotator.reset();
+    for (const profileId of run.config.profile_pool) {
+      const profile = this.profiles.find((p) => p.id === profileId);
+      if (profile) {
+        this._fingerprintRotator.addUsedFingerprint(profile.fingerprint);
+      }
+    }
     this._aggressionFactor = 1.0;
     this._cleanStreak = 0;
 
@@ -1412,9 +1434,14 @@ export class LoginRunner {
       return;
     }
 
-    // Rotate if config says so
+    // Rotate if config says so - generate a unique fingerprint for each attempt
     if (config.rotate_every_attempt && run.results.length > 0) {
-      const rotated = await this._rotate(run, credential, profile, "manual");
+      const rotated = await this._rotateWithUniqueFingerprint(
+        run,
+        credential,
+        profile,
+        "manual",
+      );
       if (rotated) profile = rotated;
     }
 
@@ -1509,9 +1536,9 @@ export class LoginRunner {
         const count = (this._softSignalCounts.get(sig) ?? 0) + 1;
         this._softSignalCounts.set(sig, count);
 
-        // Check if rotation threshold exceeded
+        // Check if rotation threshold exceeded - use unique fingerprint rotation
         if (count >= config.soft_signal_threshold) {
-          const rotated = await this._rotate(
+          const rotated = await this._rotateWithUniqueFingerprint(
             run,
             credential,
             profile,
@@ -1548,7 +1575,7 @@ export class LoginRunner {
       ) {
         this._consecutiveFailures++;
         if (this._consecutiveFailures >= 3) {
-          const rotated = await this._rotate(
+          const rotated = await this._rotateWithUniqueFingerprint(
             run,
             credential,
             profile,
@@ -1656,6 +1683,91 @@ export class LoginRunner {
     })[0];
 
     return next;
+  }
+
+  /**
+   * Rotate to a new profile with a unique fingerprint validated against AmIUnique metrics.
+   * This ensures each rotation produces a fingerprint that:
+   * 1. Passes AmIUnique-style uniqueness scoring (score >= 60)
+   * 2. Is distinct from all previously used fingerprints in this session
+   */
+  private async _rotateWithUniqueFingerprint(
+    run: LoginRun,
+    credential: CredentialPair,
+    currentProfile: Profile,
+    trigger: RotationTrigger,
+  ): Promise<Profile | null> {
+    // First, try to get a different profile from the pool
+    const baseProfile = await this._rotate(
+      run,
+      credential,
+      currentProfile,
+      trigger,
+    );
+
+    if (!baseProfile) {
+      // No other profiles available, generate unique fingerprint for current profile
+      const rotationResult = this._fingerprintRotator.rotate(Date.now());
+
+      // Validate the new fingerprint
+      const validation = validateFingerprintUniqueness(
+        rotationResult.fingerprint,
+      );
+
+      // Broadcast fingerprint rotation event
+      this.broadcast({
+        type: "login_fingerprint_rotation",
+        run_id: run.id,
+        credential_id: credential.id,
+        profile_id: currentProfile.id,
+        trigger,
+        uniqueness_score: rotationResult.uniquenessScore.score,
+        uniqueness_ratio: rotationResult.uniquenessScore.uniquenessRatio,
+        is_distinct: rotationResult.distinctFromPrevious,
+        attempts: rotationResult.attempts,
+        validation_issues: validation.issues,
+      } as any);
+
+      // Return a modified profile with the new unique fingerprint
+      return {
+        ...currentProfile,
+        fingerprint: rotationResult.fingerprint,
+      };
+    }
+
+    // Generate a unique fingerprint for the new profile
+    const rotationResult = this._fingerprintRotator.rotate(
+      baseProfile.fingerprint.seed + Date.now(),
+    );
+
+    // Validate the new fingerprint
+    const validation = validateFingerprintUniqueness(
+      rotationResult.fingerprint,
+    );
+
+    // Broadcast fingerprint rotation event
+    this.broadcast({
+      type: "login_fingerprint_rotation",
+      run_id: run.id,
+      credential_id: credential.id,
+      old_profile_id: currentProfile.id,
+      new_profile_id: baseProfile.id,
+      trigger,
+      uniqueness_score: rotationResult.uniquenessScore.score,
+      uniqueness_ratio: rotationResult.uniquenessScore.uniquenessRatio,
+      entropy_bits: rotationResult.uniquenessScore.entropyBits,
+      risk_level: rotationResult.uniquenessScore.riskLevel,
+      is_distinct: rotationResult.distinctFromPrevious,
+      attempts: rotationResult.attempts,
+      top_contributors: rotationResult.uniquenessScore.topContributors,
+      validation_issues: validation.issues,
+    } as any);
+
+    // Return the profile with the new unique fingerprint
+    return {
+      ...baseProfile,
+      fingerprint: rotationResult.fingerprint,
+    };
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

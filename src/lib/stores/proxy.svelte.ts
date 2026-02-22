@@ -342,7 +342,7 @@ async function loadProxies(): Promise<void> {
 async function addProxy(payload: AddProxyPayload): Promise<Proxy> {
   const raw = await safeInvoke<Proxy>("add_proxy", {
     name: payload.name,
-    proxy_type: payload.proxy_type,
+    proxyType: payload.proxy_type,
     host: payload.host,
     port: payload.port,
     username: payload.username ?? null,
@@ -383,7 +383,7 @@ async function updateProxy(
   const raw = await safeInvoke<Proxy>("update_proxy", {
     id,
     name: payload.name ?? null,
-    proxy_type: payload.proxy_type ?? null,
+    proxyType: payload.proxy_type ?? null,
     host: payload.host ?? null,
     port: payload.port ?? null,
     username: payload.username ?? null,
