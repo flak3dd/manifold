@@ -2,7 +2,7 @@
  * JoeFortune Test Flow Preset
  *
  * Pre-configured automation flow for https://joefortunepokies.win
- * with Australian mobile proxy settings via AnyIP.io
+ * with an (optional) proxy placeholder (set your real proxy in the UI)
  *
  * IMPORTANT: Playwright Chromium does NOT support SOCKS5 proxy authentication.
  * To use the proxy, you have the following options:
@@ -80,32 +80,30 @@ export interface RunConfigPreset {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * AnyIP.io proxy configuration for Australian mobile IPs
- *
- * Raw string: portal.anyip.io:1080:user_375050,type_mobile,country_AU:Plentyon1
+ * Example proxy configuration (placeholder only)
  * Format: host:port:username:password
- *   - Host: portal.anyip.io
+ *   - Host: proxy.example.com
  *   - Port: 1080
- *   - Username: user_375050,type_mobile,country_AU
- *   - Password: Plentyon1
+ *   - Username: USERNAME
+ *   - Password: PASSWORD
  */
 /**
- * Proxy string format: portal.anyip.io:1080:user_375050,type_mobile,country_AU:Plentyon1
+ * Proxy string format: proxy.example.com:1080:USERNAME:PASSWORD
  * Parsed as: host:port:username:password
  */
-export const ANYIP_AU_MOBILE_PROXY: ProxyPreset = {
-  name: "AnyIP AU Mobile",
-  host: "portal.anyip.io",
+export const AU_MOBILE_PROXY_EXAMPLE: ProxyPreset = {
+  name: "AU Mobile (Example)",
+  host: "proxy.example.com",
   port: 1080,
-  username: "user_375050,type_mobile,country_AU",
-  password: "Plentyon1",
+  username: "USERNAME",
+  password: "PASSWORD",
   proxyType: "http",
   country: "AU",
 };
 
 // Raw proxy string for reference
-export const ANYIP_AU_MOBILE_PROXY_STRING =
-  "portal.anyip.io:1080:user_375050,type_mobile,country_AU:Plentyon1";
+export const AU_MOBILE_PROXY_EXAMPLE_STRING =
+  "proxy.example.com:1080:USERNAME:PASSWORD";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Australian Locale Settings
@@ -157,7 +155,7 @@ export const joefortuneFlowPreset: FlowPreset = {
     "Automation test flow for joefortunepokies.win with AU mobile proxy",
   targetUrl: "https://www.joefortunepokies.win/login",
 
-  proxy: ANYIP_AU_MOBILE_PROXY,
+  proxy: AU_MOBILE_PROXY_EXAMPLE,
 
   locale: AU_LOCALE_PRESETS[0], // Sydney default
 
@@ -310,7 +308,7 @@ export const flowPresets = {
 } as const;
 
 export const proxyPresets = {
-  anyipAuMobile: ANYIP_AU_MOBILE_PROXY,
+  auMobileExample: AU_MOBILE_PROXY_EXAMPLE,
 } as const;
 
 export const localePresets = {

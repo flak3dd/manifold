@@ -176,12 +176,12 @@ export type RotationTrigger =
   | "rate_limit_429" // HTTP 429 response
   | "rate_limit_response" // 200 with embedded rate-limit message
   | "account_locked_signal" // page indicates account is locked
-  | "ip_block_signal" // "Your IP has been blocked" type message
   | "redirect_to_verify" // redirected to email/phone verification
   | "anomaly_score_high" // entropy score dropped below threshold
   | "consecutive_failures" // N hard failures in a row
   | "waf_challenge" // WAF JS challenge page detected
-  | "manual"; // operator triggered
+  | "manual" // operator triggered
+  | "nord_rotate"; // NordVPN CLI rotation (disconnect/connect)
 
 export interface RotationEvent {
   ts: number;
@@ -278,6 +278,29 @@ export interface LoginRunConfig {
    * The runner picks the next available idle profile for each credential.
    */
   profile_pool: string[];
+
+  /**
+   * Optional proxy pool for this run (proxy IDs).
+   *
+   * When non-empty, the runner assigns proxies from this pool (round-robin)
+   * and rotates within the pool on soft signals / rotation events.
+   *
+   * When empty, the runner falls back to each profile's `proxy_id` (if set).
+   */
+  proxy_pool?: string[];
+
+  /**
+   * When true, use NordVPN CLI (nordvpn disconnect/connect) for IP rotation
+   * instead of proxy pool. Traffic uses system routing (NordVPN).
+   * Rotates before each credential and on soft signals / consecutive failures.
+   */
+  nord_rotation?: boolean;
+
+  /**
+   * NordVPN country to connect to when nord_rotation is true.
+   * Defaults to "Australia" if unset.
+   */
+  nord_country?: string;
 
   /**
    * If true, fingerprint and proxy are rotated between every attempt,

@@ -369,6 +369,9 @@ function createRun(
     id,
     form: formConfig,
     profile_pool: options.profile_pool ?? defaultPool,
+    proxy_pool: options.proxy_pool ?? [],
+    nord_rotation: options.nord_rotation ?? false,
+    nord_country: options.nord_country ?? "Australia",
     rotate_every_attempt: options.rotate_every_attempt ?? false,
     soft_signal_threshold: options.soft_signal_threshold ?? 1,
     max_retries: options.max_retries ?? 2,
@@ -452,6 +455,51 @@ function startRun(runId: string): { success: boolean; error?: string } {
     };
   }
 
+  // Validate selected profile proxies before launch.
+  // Proxy passwords are intentionally not serialized from backend, so after app restart
+  // authenticated proxies may exist with username but missing password in memory.
+  // Skip proxy validation when using Nord rotation (traffic via system VPN).
+  const proxyById = new Map(proxyStore.proxies.map((p) => [p.id, p]));
+  const runProxyPool = run.config.proxy_pool ?? [];
+  const usingRunProxyPool = runProxyPool.length > 0;
+  const usingNord = run.config.nord_rotation === true;
+  if (!usingNord && !usingRunProxyPool) {
+    for (const profile of profiles) {
+      if (!profile.proxy_id) continue;
+      const proxy = proxyById.get(profile.proxy_id);
+      if (!proxy) continue;
+      if (proxy.username && !proxy.password) {
+        return {
+          success: false,
+          error:
+            `Proxy "${proxy.name}" is missing password in current session. ` +
+            `Edit and re-save the proxy password, then retry automation.`,
+        };
+      }
+    }
+  }
+
+  // Validate run-level proxy pool (if provided).
+  if (!usingNord && usingRunProxyPool) {
+    for (const proxyId of runProxyPool) {
+      const proxy = proxyById.get(proxyId);
+      if (!proxy) {
+        return {
+          success: false,
+          error: `Selected proxy not found: ${proxyId}`,
+        };
+      }
+      if (proxy.username && !proxy.password) {
+        return {
+          success: false,
+          error:
+            `Proxy "${proxy.name}" is missing password in current session. ` +
+            `Edit and re-save the proxy password (or set it in Automation), then retry.`,
+        };
+      }
+    }
+  }
+
   run.status = "running";
   run.started_at = new Date().toISOString();
   runs = [...runs];
@@ -470,7 +518,7 @@ function startRun(runId: string): { success: boolean; error?: string } {
 
   if (!ok) {
     // Revert status if send failed
-    run.status = "pending";
+    run.status = "idle";
     run.started_at = null;
     runs = [...runs];
     return {

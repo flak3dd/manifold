@@ -3,7 +3,7 @@
 // Uses imported trace data to fit statistical models for realistic behavior.
 // Implements online GMM fitting and curvature analysis with entropy weighting.
 
-import type { MouseTraceSegment, VelocityGMM, CurvatureHistogram } from ./importer.js;
+import type { MouseTraceSegment, VelocityGMM, CurvatureHistogram } from "./importer.js";
 
 export interface CalibrationResult {
   velocityGMM: VelocityGMM;

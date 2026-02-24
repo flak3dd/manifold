@@ -6,9 +6,7 @@
  * 2. Places scraped results into automation configuration
  * 3. Runs random Australian profiles with the specified proxy
  *
- * Proxy: portal.anyip.io:1080 (SOCKS5)
- * Username: user_375050,type_mobile,country_AU
- * Password: Plentyon1
+ * Proxy: provided via env (optional)
  *
  * Usage:
  *   npx tsx scripts/test-flow-joefortune.ts
@@ -27,20 +25,41 @@ import {
 
 const TARGET_URL = "https://joefortunepokies.win";
 
-// Proxy configuration from: portal.anyip.io:1080:user_375050,type_mobile,country_AU:Plentyon1
-// Using HTTP proxy format
-const PROXY_CONFIG = {
-  // HTTP proxy with authentication
-  server: "http://portal.anyip.io:1080",
-  username: "user_375050,type_mobile,country_AU",
-  password: "Plentyon1",
-  // Parsed from format: host:port:username:password
-  host: "portal.anyip.io",
-  port: 1080,
+type ProxyEnvConfig = {
+  server: string;
+  username: string;
+  password: string;
+  host: string;
+  port: number;
 };
 
-// Flag to control proxy usage
-const USE_PROXY = true;
+function readProxyFromEnv(): ProxyEnvConfig | null {
+  const host = (process.env.PROXY_HOST ?? "").trim();
+  const port = Number.parseInt(process.env.PROXY_PORT ?? "", 10);
+  const username = (process.env.PROXY_USERNAME ?? "").trim();
+  const password = (process.env.PROXY_PASSWORD ?? "").trim();
+  const scheme = (process.env.PROXY_SCHEME ?? "http").trim();
+
+  // If nothing set, run without proxy.
+  if (!host && !process.env.PROXY_PORT && !username && !password) return null;
+
+  if (!host || !Number.isFinite(port) || port < 1 || port > 65535 || !username || !password) {
+    throw new Error(
+      "Invalid proxy env vars. Set: PROXY_HOST, PROXY_PORT, PROXY_USERNAME, PROXY_PASSWORD (optional PROXY_SCHEME=http|https|socks5).",
+    );
+  }
+
+  return {
+    server: `${scheme}://${host}:${port}`,
+    username,
+    password,
+    host,
+    port,
+  };
+}
+
+const PROXY_CONFIG = readProxyFromEnv();
+const USE_PROXY = PROXY_CONFIG !== null;
 
 // Australian locale settings for profile consistency
 const AU_LOCALE_CONFIG = {
@@ -777,8 +796,11 @@ async function runTestFlow(): Promise<FlowResult> {
     "═══════════════════════════════════════════════════════════════════════",
   );
   log(`Target URL: ${TARGET_URL}`);
-  log(`Proxy: ${PROXY_CONFIG.server}`);
-  log(`Proxy User: ${PROXY_CONFIG.username}`);
+  log(
+    `Proxy: ${
+      USE_PROXY && PROXY_CONFIG ? `${PROXY_CONFIG.host}:${PROXY_CONFIG.port}` : "None"
+    }`,
+  );
   log("");
 
   let browser: Browser | null = null;
@@ -811,16 +833,24 @@ async function runTestFlow(): Promise<FlowResult> {
       "─── PHASE 1: Form Scraping ───────────────────────────────────────────",
     );
 
-    // Build context options with HTTP proxy
-    log("Configuring HTTP proxy...");
-    log(`Proxy server: ${PROXY_CONFIG.server}`);
+    // Build context options (proxy optional)
+    if (USE_PROXY && PROXY_CONFIG) {
+      log("Configuring proxy...");
+      log(`Proxy server: ${PROXY_CONFIG.host}:${PROXY_CONFIG.port}`);
+    } else {
+      log("Configuring context (no proxy)...");
+    }
 
     const contextOptions: Parameters<typeof browser.newContext>[0] = {
-      proxy: {
-        server: PROXY_CONFIG.server,
-        username: PROXY_CONFIG.username,
-        password: PROXY_CONFIG.password,
-      },
+      ...(USE_PROXY && PROXY_CONFIG
+        ? {
+            proxy: {
+              server: PROXY_CONFIG.server,
+              username: PROXY_CONFIG.username,
+              password: PROXY_CONFIG.password,
+            },
+          }
+        : {}),
       locale: AU_LOCALE_CONFIG.locale,
       timezoneId: selectedProfile.timezone,
       userAgent:
@@ -832,7 +862,11 @@ async function runTestFlow(): Promise<FlowResult> {
     };
 
     const scrapeContext = await browser.newContext(contextOptions);
-    log("Browser context created with HTTP proxy");
+    log(
+      USE_PROXY && PROXY_CONFIG
+        ? "Browser context created with proxy"
+        : "Browser context created (no proxy)",
+    );
 
     const scrapePage = await scrapeContext.newPage();
 
@@ -885,7 +919,11 @@ async function runTestFlow(): Promise<FlowResult> {
       `  Submit Selector: ${automationConfig.form.submit_selector || "Not detected"}`,
     );
     log(`  Profile: ${automationConfig.profile.name}`);
-    log(`  Proxy: AU Mobile via AnyIP`);
+    log(
+      `  Proxy: ${
+        USE_PROXY && PROXY_CONFIG ? `${PROXY_CONFIG.host}:${PROXY_CONFIG.port}` : "None"
+      }`,
+    );
 
     // Phase 3: Run Automation Test
     log("");

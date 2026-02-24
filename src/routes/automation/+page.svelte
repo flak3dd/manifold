@@ -68,8 +68,14 @@
     let domainAwareNoise = $state(true);
     let patchTls = $state(false);
     let selectedProfiles = $state<string[]>([]);
+    let selectedProxies = $state<string[]>([]);
+    let nordRotation = $state(false);
+    let nordCountry = $state("Australia");
+    let fastMode = $state(false);
     let showAdvanced = $state(false);
     let showFormConfig = $state(true);
+    let proxyPasswordBulk = $state("");
+    let settingProxyPasswords = $state(false);
 
     // ── Consume URL-test → Automation handoff on mount ────────────────────────
     onMount(() => {
@@ -194,6 +200,50 @@
             submitSelector.length > 0 &&
             selectedProfiles.length > 0,
     );
+
+    // Proxies that will be used by this run (run-level pool if set; otherwise per-profile proxies).
+    let proxiesNeedingPassword = $derived.by(() => {
+        const proxyById = new Map(proxies.map((p) => [p.id, p]));
+        const ids = new Set<string>();
+
+        if (selectedProxies.length > 0) {
+            selectedProxies.forEach((id) => ids.add(id));
+        } else {
+            const profileById = new Map(profiles.map((p) => [p.id, p]));
+            for (const pid of selectedProfiles) {
+                const prof = profileById.get(pid);
+                if (prof?.proxy_id) ids.add(prof.proxy_id);
+            }
+        }
+
+        return Array.from(ids)
+            .map((id) => proxyById.get(id))
+            .filter((p): p is (typeof proxies)[number] => !!p)
+            .filter((p) => !!p.username && !p.password);
+    });
+
+    async function applyProxyPasswordBulk() {
+        const pw = proxyPasswordBulk.trim();
+        if (!pw) return;
+        if (proxiesNeedingPassword.length === 0) return;
+
+        settingProxyPasswords = true;
+        try {
+            await Promise.all(
+                proxiesNeedingPassword.map((p) =>
+                    proxyStore.updateProxy(p.id, { password: pw }),
+                ),
+            );
+            toast.success(
+                `Saved password for ${proxiesNeedingPassword.length} proxies`,
+            );
+            proxyPasswordBulk = "";
+        } catch (e) {
+            toast.error(String(e));
+        } finally {
+            settingProxyPasswords = false;
+        }
+    }
 
     // ── URL → preset auto-fill (with scraping) ────────────────────────────────
     async function applyPreset() {
@@ -332,19 +382,22 @@
             captcha_selector: captchaSelector || undefined,
             consent_selector: consentSelector || undefined,
             totp_selector: totpSelector || undefined,
-            post_submit_timeout_ms: postSubmitTimeout,
-            page_load_timeout_ms: pageLoadTimeout,
+            post_submit_timeout_ms: fastMode ? 4000 : postSubmitTimeout,
+            page_load_timeout_ms: fastMode ? 8000 : pageLoadTimeout,
             export_session_on_success: exportSession,
         };
 
         const run = automationStore.createRun(form, [...drafts], {
             profile_pool: selectedProfiles,
+            proxy_pool: nordRotation ? [] : selectedProxies,
+            nord_rotation: nordRotation,
+            nord_country: nordCountry.trim() || "Australia",
             rotate_every_attempt: rotateEvery,
             soft_signal_threshold: softThreshold,
-            max_retries: maxRetries,
+            max_retries: fastMode ? 0 : maxRetries,
             mode: runMode,
             concurrency: concurrency,
-            launch_delay_ms: launchDelay,
+            launch_delay_ms: fastMode ? 1500 : launchDelay,
             domain_aware_noise: domainAwareNoise,
             patch_tls: patchTls,
         });
@@ -515,15 +568,26 @@
 {#if showScreenshot}
     <div
         class="lightbox"
+        role="button"
+        tabindex="-1"
         onclick={() => {
             showScreenshot = null;
         }}
+        onkeydown={(e) => {
+            if (e.key === "Escape") showScreenshot = null;
+        }}
     >
-        <div class="lightbox-inner" onclick={(e) => e.stopPropagation()}>
+        <div
+            class="lightbox-inner"
+            role="presentation"
+            onclick={(e) => e.stopPropagation()}
+            onkeydown={(e) => e.stopPropagation()}
+        >
             <div class="lightbox-header">
                 <span class="section-label">Screenshot</span>
                 <button
                     class="icon-btn"
+                    aria-label="Close screenshot preview"
                     onclick={() => {
                         showScreenshot = null;
                     }}
@@ -857,8 +921,9 @@
                         </div>
                         <div class="field-row">
                             <div class="field-grow">
-                                <label class="field-label">Login URL</label>
+                                <label class="field-label" for="auto-login-url">Login URL</label>
                                 <input
+                                    id="auto-login-url"
                                     class="input"
                                     type="url"
                                     placeholder="https://accounts.example.com/login"
@@ -975,6 +1040,8 @@
                             <div
                                 class="drop-zone"
                                 class:drag-over={dragOver}
+                                role="button"
+                                tabindex="0"
                                 ondragover={(e) => {
                                     e.preventDefault();
                                     dragOver = true;
@@ -1063,6 +1130,7 @@
                                             {/if}
                                             <button
                                                 class="icon-btn danger"
+                                                aria-label="Remove draft credential"
                                                 onclick={() =>
                                                     automationStore.removeDraft(
                                                         cred.id,
@@ -1135,9 +1203,9 @@
                             {#if profiles.length === 0}
                                 <div class="empty">
                                     <span class="empty-hint"
-                                        >No profiles. <a href="/profiles"
-                                            >Create one →</a
-                                        ></span
+>No profiles. <a href="/fingerprint"
+                                        >Create one →</a
+                                    ></span
                                     >
                                 </div>
                             {:else}
@@ -1218,6 +1286,226 @@
                             </div>
                         {/if}
                     </div>
+
+                    <!-- Nord rotation -->
+                    <div class="setup-card">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                bind:checked={nordRotation}
+                                class="checkbox"
+                            />
+                            <span class="font-medium">NordVPN rotation</span>
+                        </label>
+                        <p class="card-hint">
+                            Use NordVPN CLI (nordvpn disconnect/connect) for IP
+                            rotation per credential and on soft blocks. No proxy
+                            needed — traffic uses system routing.
+                        </p>
+                        {#if nordRotation}
+                            <div class="field-row mt-2">
+                                <label class="field-label" for="nord-country"
+                                    >Country</label
+                                >
+                                <input
+                                    id="nord-country"
+                                    class="input"
+                                    type="text"
+                                    bind:value={nordCountry}
+                                    placeholder="e.g. Australia, United States"
+                                />
+                            </div>
+                        {/if}
+                    </div>
+
+                    <!-- Proxy Pool (Run-level rotation) -->
+                    <div class="setup-card" class:opacity-50={nordRotation}>
+                        <div class="card-title">
+                            <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 12 12"
+                                fill="none"
+                            >
+                                <path
+                                    d="M2 6a4 4 0 0 1 8 0v3a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6Z"
+                                    stroke="currentColor"
+                                    stroke-width="1.3"
+                                />
+                                <path
+                                    d="M4 6.2V5.8a2 2 0 1 1 4 0v.4"
+                                    stroke="currentColor"
+                                    stroke-width="1.3"
+                                    stroke-linecap="round"
+                                />
+                            </svg>
+                            Proxy Pool (Rotation)
+                            {#if selectedProxies.length > 0 && !nordRotation}
+                                <span class="card-count"
+                                    >{selectedProxies.length}</span
+                                >
+                            {/if}
+                        </div>
+
+                        <p class="card-hint">
+                            {#if nordRotation}
+                                Disabled when NordVPN rotation is on.
+                            {:else}
+                                Optional. If selected, automation will use these
+                                proxies and rotate through them (round-robin) on
+                                soft blocks. Overrides per-profile proxies for
+                                this run.
+                            {/if}
+                        </p>
+
+                        <div class="profile-pool-list">
+                            {#if nordRotation}
+                                <div class="empty">
+                                    <span class="empty-hint"
+                                        >NordVPN rotation active — proxy pool
+                                        unused</span
+                                    >
+                                </div>
+                            {:else if proxies.length === 0}
+                                <div class="empty">
+                                    <span class="empty-hint"
+                                        >No proxies. <a href="/proxies"
+                                            >Add one →</a
+                                        ></span
+                                    >
+                                </div>
+                            {:else}
+                                {#each proxies as proxy (proxy.id)}
+                                    {@const checked = selectedProxies.includes(
+                                        proxy.id,
+                                    )}
+                                    <label
+                                        class="pool-item"
+                                        class:selected={checked}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            {checked}
+                                            disabled={nordRotation}
+                                            onchange={() => {
+                                                if (checked) {
+                                                    selectedProxies =
+                                                        selectedProxies.filter(
+                                                            (id) =>
+                                                                id !== proxy.id,
+                                                        );
+                                                } else {
+                                                    selectedProxies = [
+                                                        ...selectedProxies,
+                                                        proxy.id,
+                                                    ];
+                                                }
+                                            }}
+                                        />
+                                        <span
+                                            class="dot"
+                                            class:dot-running={false}
+                                            class:dot-error={!proxy.healthy}
+                                            class:dot-idle={proxy.healthy}
+                                        ></span>
+                                        <span class="pool-name truncate"
+                                            >{proxy.name}</span
+                                        >
+                                        <span class="tag"
+                                            >{proxy.proxy_type.toUpperCase()}</span
+                                        >
+                                    </label>
+                                {/each}
+                            {/if}
+                        </div>
+
+                        {#if !nordRotation && proxies.length > 1}
+                            <div class="pool-actions">
+                                <button
+                                    class="btn btn-ghost btn-sm"
+                                    onclick={() => {
+                                        selectedProxies = proxies.map(
+                                            (p) => p.id,
+                                        );
+                                    }}
+                                >
+                                    Select all
+                                </button>
+                                <button
+                                    class="btn btn-ghost btn-sm"
+                                    onclick={() => {
+                                        selectedProxies = proxies
+                                            .filter((p) => p.healthy)
+                                            .map((p) => p.id);
+                                    }}
+                                >
+                                    Select healthy
+                                </button>
+                                <button
+                                    class="btn btn-ghost btn-sm"
+                                    onclick={() => {
+                                        selectedProxies = [];
+                                    }}
+                                >
+                                    Clear
+                                </button>
+                            </div>
+                        {/if}
+                    </div>
+
+                    <!-- Proxy Passwords (session-only rehydrate) -->
+                    {#if proxiesNeedingPassword.length > 0}
+                        <div class="setup-card">
+                            <div class="card-title">Proxy Password Required</div>
+                            <p class="card-hint">
+                                These proxies use auth, but their password is
+                                not present in the current session (passwords
+                                aren’t returned from the backend). Enter it once
+                                to run automation.
+                            </p>
+
+                            <div class="field-row">
+                                <div class="field-grow">
+                                <label class="field-label" for="bulk-proxy-pw"
+                                    >Password (apply to all)</label
+                                >
+                                <input
+                                    id="bulk-proxy-pw"
+                                    class="input"
+                                    type="password"
+                                    bind:value={proxyPasswordBulk}
+                                    placeholder="••••••••"
+                                    disabled={settingProxyPasswords}
+                                />
+                                </div>
+                            </div>
+                            <div class="pool-actions">
+                                <button
+                                    class="btn btn-secondary btn-sm"
+                                    onclick={applyProxyPasswordBulk}
+                                    disabled={
+                                        settingProxyPasswords ||
+                                        !proxyPasswordBulk.trim()
+                                    }
+                                >
+                                    {settingProxyPasswords
+                                        ? "Saving…"
+                                        : "Save password"}
+                                </button>
+                            </div>
+
+                            <div class="small-list">
+                                {#each proxiesNeedingPassword as p (p.id)}
+                                    <div class="small-row">
+                                        <span class="truncate">{p.name}</span>
+                                        <span class="tag tag-accent"
+                                            >auth</span
+                                        >
+                                    </div>
+                                {/each}
+                            </div>
+                        </div>
+                    {/if}
                 </div>
 
                 <!-- ── Right: Form config + Run options ── -->
@@ -1226,8 +1514,16 @@
                     <div class="setup-card">
                         <div
                             class="card-title clickable"
+                            role="button"
+                            tabindex="0"
                             onclick={() => {
                                 showFormConfig = !showFormConfig;
+                            }}
+                            onkeydown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    showFormConfig = !showFormConfig;
+                                }
                             }}
                         >
                             <svg
@@ -1337,86 +1633,94 @@
                                 {/if}
                                 <div class="field-grid-2">
                                     <div class="field-group">
-                                        <label class="field-label"
+                                        <label class="field-label" for="auto-username-selector"
                                             >Username / Email field <span
                                                 class="req">*</span
                                             ></label
                                         >
                                         <input
+                                            id="auto-username-selector"
                                             class="input mono"
                                             bind:value={usernameSelector}
                                             placeholder='input[name="email"], #email'
                                         />
                                     </div>
                                     <div class="field-group">
-                                        <label class="field-label"
+                                        <label class="field-label" for="auto-password-selector"
                                             >Password field <span class="req"
                                                 >*</span
                                             ></label
                                         >
                                         <input
+                                            id="auto-password-selector"
                                             class="input mono"
                                             bind:value={passwordSelector}
                                             placeholder='input[type="password"]'
                                         />
                                     </div>
                                     <div class="field-group">
-                                        <label class="field-label"
+                                        <label class="field-label" for="auto-submit-selector"
                                             >Submit button <span class="req"
                                                 >*</span
                                             ></label
                                         >
                                         <input
+                                            id="auto-submit-selector"
                                             class="input mono"
                                             bind:value={submitSelector}
                                             placeholder='button[type="submit"]'
                                         />
                                     </div>
                                     <div class="field-group">
-                                        <label class="field-label"
+                                        <label class="field-label" for="auto-success-selector"
                                             >Success indicator</label
                                         >
                                         <input
+                                            id="auto-success-selector"
                                             class="input mono"
                                             bind:value={successSelector}
                                             placeholder=".dashboard, #home-feed"
                                         />
                                     </div>
                                     <div class="field-group">
-                                        <label class="field-label"
+                                        <label class="field-label" for="auto-failure-selector"
                                             >Failure indicator</label
                                         >
                                         <input
+                                            id="auto-failure-selector"
                                             class="input mono"
                                             bind:value={failureSelector}
                                             placeholder=".error-message, #login-error"
                                         />
                                     </div>
                                     <div class="field-group">
-                                        <label class="field-label"
+                                        <label class="field-label" for="auto-captcha-selector"
                                             >CAPTCHA detector</label
                                         >
                                         <input
+                                            id="auto-captcha-selector"
                                             class="input mono"
                                             bind:value={captchaSelector}
                                             placeholder=".g-recaptcha, .h-captcha"
                                         />
                                     </div>
                                     <div class="field-group">
-                                        <label class="field-label"
+                                        <label class="field-label" for="auto-consent-selector"
                                             >Consent banner (auto-dismiss)</label
                                         >
                                         <input
+                                            id="auto-consent-selector"
                                             class="input mono"
                                             bind:value={consentSelector}
                                             placeholder="#accept-cookies, .consent-btn"
                                         />
                                     </div>
                                     <div class="field-group">
-                                        <label class="field-label"
+                                        <label class="field-label" for="auto-totp-selector"
                                             >TOTP / 2FA field</label
                                         >
                                         <input
+                                            id="auto-totp-selector"
                                             class="input mono"
                                             bind:value={totpSelector}
                                             placeholder='input[name="otp"]'
@@ -1426,10 +1730,11 @@
 
                                 <div class="field-grid-2 mt">
                                     <div class="field-group">
-                                        <label class="field-label"
+                                        <label class="field-label" for="auto-page-load-timeout"
                                             >Page load timeout (ms)</label
                                         >
                                         <input
+                                            id="auto-page-load-timeout"
                                             class="input mono"
                                             type="number"
                                             min="3000"
@@ -1439,10 +1744,11 @@
                                         />
                                     </div>
                                     <div class="field-group">
-                                        <label class="field-label"
+                                        <label class="field-label" for="auto-post-submit-timeout"
                                             >Post-submit timeout (ms)</label
                                         >
                                         <input
+                                            id="auto-post-submit-timeout"
                                             class="input mono"
                                             type="number"
                                             min="2000"
@@ -1524,12 +1830,23 @@
                             </label>
                         </div>
 
+                        <label class="checkbox-row mt">
+                            <input
+                                type="checkbox"
+                                bind:checked={fastMode}
+                            />
+                            <span
+                                >Fast mode — 1 attempt per credential, shorter timeouts</span
+                            >
+                        </label>
+
                         <div class="field-grid-2 mt">
                             <div class="field-group">
-                                <label class="field-label"
+                                <label class="field-label" for="auto-soft-threshold"
                                     >Soft signal threshold</label
                                 >
                                 <input
+                                    id="auto-soft-threshold"
                                     class="input mono"
                                     type="number"
                                     min="1"
@@ -1541,8 +1858,9 @@
                                 >
                             </div>
                             <div class="field-group">
-                                <label class="field-label">Max retries</label>
+                                <label class="field-label" for="auto-max-retries">Max retries</label>
                                 <input
+                                    id="auto-max-retries"
                                     class="input mono"
                                     type="number"
                                     min="0"
@@ -1554,8 +1872,8 @@
                                 >
                             </div>
                             <div class="field-group">
-                                <label class="field-label">Mode</label>
-                                <select class="input" bind:value={runMode}>
+                                <label class="field-label" for="auto-run-mode">Mode</label>
+                                <select id="auto-run-mode" class="input" bind:value={runMode}>
                                     <option value="sequential"
                                         >Sequential</option
                                     >
@@ -1563,8 +1881,9 @@
                                 </select>
                             </div>
                             <div class="field-group">
-                                <label class="field-label">Concurrency</label>
+                                <label class="field-label" for="auto-concurrency">Concurrency</label>
                                 <input
+                                    id="auto-concurrency"
                                     class="input mono"
                                     type="number"
                                     min="1"
@@ -1574,10 +1893,11 @@
                                 />
                             </div>
                             <div class="field-group">
-                                <label class="field-label"
+                                <label class="field-label" for="auto-launch-delay"
                                     >Launch delay (ms)</label
                                 >
                                 <input
+                                    id="auto-launch-delay"
                                     class="input mono"
                                     type="number"
                                     min="500"
@@ -2229,9 +2549,17 @@
                         <div
                             class="history-card"
                             class:active={activeRun?.id === run.id}
+                            role="button"
+                            tabindex="0"
                             onclick={() => {
                                 automationStore.setActiveRun(run.id);
                                 activeTab = "run";
+                            }}
+                            onkeydown={(e) => {
+                                if (e.key === "Enter") {
+                                    automationStore.setActiveRun(run.id);
+                                    activeTab = "run";
+                                }
                             }}
                         >
                             <div class="history-card-header">
@@ -2253,6 +2581,7 @@
                                     >
                                     <button
                                         class="icon-btn danger"
+                                        aria-label="Delete run"
                                         onclick={(e) => {
                                             e.stopPropagation();
                                             automationStore.deleteRun(run.id);
@@ -2303,21 +2632,24 @@
                                 >
                                 <div
                                     class="history-actions"
-                                    onclick={(e) => e.stopPropagation()}
                                 >
                                     <button
                                         class="btn btn-ghost btn-sm"
-                                        onclick={() =>
+                                        onclick={(e) => {
+                                            e.stopPropagation();
                                             automationStore.downloadRunReport(
                                                 run.id,
-                                            )}>↓ Report</button
+                                            );
+                                        }}>↓ Report</button
                                     >
                                     <button
                                         class="btn btn-ghost btn-sm"
-                                        onclick={() =>
+                                        onclick={(e) => {
+                                            e.stopPropagation();
                                             automationStore.downloadSuccessCreds(
                                                 run.id,
-                                            )}>↓ Hits</button
+                                            );
+                                        }}>↓ Hits</button
                                     >
                                 </div>
                             </div>
@@ -3063,6 +3395,25 @@
     .signal-tag {
         font-size: 9px;
         padding: 2px 6px;
+    }
+
+    /* ── Small list (proxy password helper) ─────────────────────── */
+    .small-list {
+        margin-top: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .small-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 8px 10px;
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-sm);
+        background: var(--surface-2);
     }
 
     /* ── Message and error help ────────────────────────────────── */

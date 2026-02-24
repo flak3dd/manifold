@@ -15,6 +15,7 @@
 //   const runner = new LoginRunner(profiles, proxies, wsClients);
 //   await runner.start(run);
 
+import { execSync } from "node:child_process";
 import { chromium } from "playwright-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import type { Browser, BrowserContext, Page } from "playwright";
@@ -66,6 +67,40 @@ function uuid(): string {
 
 function now(): string {
   return new Date().toISOString();
+}
+
+/** NordVPN CLI rotation: disconnect then connect to get new IP */
+async function nordRotate(country: string = "Australia"): Promise<boolean> {
+  let nordCli = "nordvpn";
+  try {
+    try {
+      execSync("nordvpn --version", { stdio: "pipe" });
+    } catch {
+      const pf = process.env["ProgramFiles"];
+      const pf86 = process.env["ProgramFiles(x86)"];
+      for (const base of [pf, pf86].filter(Boolean)) {
+        const p = `${base}\\NordVPN\\NordVPN.exe`;
+        try {
+          execSync(`"${p}" --version`, { stdio: "pipe" });
+          nordCli = `"${p}"`;
+          break;
+        } catch {
+          /* try next */
+        }
+      }
+    }
+    execSync(`${nordCli} disconnect`, { stdio: "pipe", timeout: 15_000 });
+    await sleep(2500);
+    const countryArg = country ? `-g "${country}"` : "";
+    execSync(`${nordCli} connect ${countryArg}`.trim(), {
+      stdio: "pipe",
+      timeout: 30_000,
+    });
+    await sleep(1500);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function seededJitter(base: number, pct: number, seed: number): number {
@@ -348,19 +383,6 @@ async function detectSoftSignals(
       }
     }
 
-    // IP block signals
-    const ipBlockPatterns = [
-      /your (ip|address) (has been|is) (blocked|banned)/i,
-      /access denied/i,
-      /forbidden/i,
-    ];
-    for (const pat of ipBlockPatterns) {
-      if (pat.test(content)) {
-        signals.push("ip_block_signal");
-        break;
-      }
-    }
-
     // Account locked signals
     const lockedPatterns = [
       /account (has been|is) (locked|suspended|banned|disabled)/i,
@@ -616,10 +638,7 @@ async function performLoginAttempt(
 
   // Pre-load signal check
   signals = await detectSoftSignals(page, config);
-  if (
-    signals.includes("waf_challenge") ||
-    signals.includes("ip_block_signal")
-  ) {
+  if (signals.includes("waf_challenge")) {
     const ss = await page
       .screenshot()
       .catch(() => undefined)
@@ -931,9 +950,6 @@ async function performLoginAttempt(
             if (pageSignals.includes("account_locked_signal")) {
               outcome = "account_locked";
               detail = "Account locked signal after navigation";
-            } else if (pageSignals.includes("ip_block_signal")) {
-              outcome = "ip_blocked";
-              detail = "IP blocked after navigation";
             } else if (pageSignals.includes("captcha_detected")) {
               outcome = "captcha_block";
               detail = "CAPTCHA detected after navigation";
@@ -1163,6 +1179,8 @@ export class LoginRunner {
   private _softSignalCounts = new Map<string, number>();
   private _consecutiveFailures = 0;
   private _fingerprintRotator: FingerprintRotationManager;
+  private _proxyPoolIdx = 0;
+  private _credProxyId = new Map<string, string>();
 
   // ── Adaptive WAF aggression closed-loop ───────────────────────────────────
   // Starts at 1.0 (baseline noise).  Each WAF signal multiplies by 1.4×
@@ -1202,6 +1220,8 @@ export class LoginRunner {
     this._aborted = false;
     this._softSignalCounts.clear();
     this._consecutiveFailures = 0;
+    this._proxyPoolIdx = 0;
+    this._credProxyId.clear();
 
     // Reset fingerprint rotator for new run and seed with initial profile fingerprints
     this._fingerprintRotator.reset();
@@ -1278,33 +1298,44 @@ export class LoginRunner {
     run: LoginRun,
     domainProfile?: DomainProfile,
   ): Promise<void> {
-    const pending = run.credentials.filter(
-      (c) =>
-        c.status === "pending" ||
-        c.status === "error" ||
-        c.status === "soft_blocked",
-    );
+    const maxRetries = run.config.max_retries ?? 0;
 
-    for (const credential of pending) {
+    while (true) {
       if (this._aborted) break;
 
-      // Respect pause
-      while (this._paused && !this._aborted) {
-        await sleep(250);
+      const pending = run.credentials.filter((c) => {
+        if (c.status === "pending") return true;
+        if (
+          (c.status === "error" || c.status === "soft_blocked") &&
+          c.attempts <= maxRetries
+        )
+          return true;
+        return false;
+      });
+
+      if (pending.length === 0) break;
+
+      for (const credential of pending) {
+        if (this._aborted) break;
+
+        // Respect pause
+        while (this._paused && !this._aborted) {
+          await sleep(250);
+        }
+        if (this._aborted) break;
+
+        await this._attemptCredential(run, credential, domainProfile);
+
+        // Domain-aware inter-attempt gap
+        const gap =
+          domainProfile?.min_attempt_gap_ms ?? run.config.launch_delay_ms;
+        const jittered = seededJitter(
+          gap,
+          0.25,
+          credential.username.length + (Date.now() % 1000),
+        );
+        await sleep(jittered);
       }
-      if (this._aborted) break;
-
-      await this._attemptCredential(run, credential, domainProfile);
-
-      // Domain-aware inter-attempt gap
-      const gap =
-        domainProfile?.min_attempt_gap_ms ?? run.config.launch_delay_ms;
-      const jittered = seededJitter(
-        gap,
-        0.25,
-        credential.username.length + (Date.now() % 1000),
-      );
-      await sleep(jittered);
     }
   }
 
@@ -1315,33 +1346,44 @@ export class LoginRunner {
     domainProfile?: DomainProfile,
   ): Promise<void> {
     const concurrency = Math.max(1, Math.min(run.config.concurrency, 8));
-    const pending = run.credentials.filter(
-      (c) =>
-        c.status === "pending" ||
-        c.status === "error" ||
-        c.status === "soft_blocked",
-    );
+    const maxRetries = run.config.max_retries ?? 0;
 
-    // Chunked parallel execution
-    for (let i = 0; i < pending.length; i += concurrency) {
-      if (this._aborted) break;
-      while (this._paused && !this._aborted) await sleep(250);
+    while (true) {
       if (this._aborted) break;
 
-      const batch = pending.slice(i, i + concurrency);
-      await Promise.allSettled(
-        batch.map(async (cred, idx) => {
-          // Stagger launch within batch
-          await sleep(run.config.launch_delay_ms * idx);
-          if (!this._aborted) {
-            await this._attemptCredential(run, cred, domainProfile);
-          }
-        }),
-      );
+      const pending = run.credentials.filter((c) => {
+        if (c.status === "pending") return true;
+        if (
+          (c.status === "error" || c.status === "soft_blocked") &&
+          c.attempts <= maxRetries
+        )
+          return true;
+        return false;
+      });
 
-      const gap =
-        domainProfile?.min_attempt_gap_ms ?? run.config.launch_delay_ms;
-      await sleep(gap * 0.5);
+      if (pending.length === 0) break;
+
+      // Chunked parallel execution
+      for (let i = 0; i < pending.length; i += concurrency) {
+        if (this._aborted) break;
+        while (this._paused && !this._aborted) await sleep(250);
+        if (this._aborted) break;
+
+        const batch = pending.slice(i, i + concurrency);
+        await Promise.allSettled(
+          batch.map(async (cred, idx) => {
+            // Stagger launch within batch
+            await sleep(run.config.launch_delay_ms * idx);
+            if (!this._aborted) {
+              await this._attemptCredential(run, cred, domainProfile);
+            }
+          }),
+        );
+
+        const gap =
+          domainProfile?.min_attempt_gap_ms ?? run.config.launch_delay_ms;
+        await sleep(gap * 0.5);
+      }
     }
   }
 
@@ -1361,7 +1403,6 @@ export class LoginRunner {
       "waf_challenge",
       "rate_limit_429",
       "rate_limit_response",
-      "ip_block_signal",
       "redirect_to_verify",
     ]);
 
@@ -1434,8 +1475,14 @@ export class LoginRunner {
       return;
     }
 
+    const useNord = config.nord_rotation === true;
+
     // Rotate if config says so - generate a unique fingerprint for each attempt
     if (config.rotate_every_attempt && run.results.length > 0) {
+      if (useNord) {
+        const country = config.nord_country ?? "Australia";
+        await nordRotate(country);
+      }
       const rotated = await this._rotateWithUniqueFingerprint(
         run,
         credential,
@@ -1459,8 +1506,39 @@ export class LoginRunner {
       human: adjustedHuman,
     };
 
-    // Resolve proxy
-    const proxy = this._resolveProxy(profile);
+    // Nord rotation: use system VPN, no proxy; rotate via nordvpn CLI
+    if (useNord && credential.attempts === 0) {
+      const country = config.nord_country ?? "Australia";
+      await nordRotate(country);
+      this.broadcast({
+        type: "login_rotation",
+        run_id: run.id,
+        event: {
+          ts: Date.now(),
+          trigger: "nord_rotate",
+          credential_id: credential.id,
+          old_profile_id: profile.id,
+          new_profile_id: profile.id,
+          old_proxy_id: null,
+          new_proxy_id: "nord:" + country,
+          details: `NordVPN rotated to ${country}`,
+        } satisfies RotationEvent,
+      });
+    }
+
+    // Resolve proxy (run-level proxy pool overrides per-profile proxy_id; Nord overrides all)
+    if (!useNord) {
+      if (
+        (config.proxy_pool?.length ?? 0) > 0 &&
+        config.rotate_every_attempt &&
+        run.results.length > 0
+      ) {
+        this._rotateProxyPool(run, credential.id, profile.id, "rotate_every_attempt");
+      }
+    }
+    let proxy = useNord
+      ? null
+      : this._resolveProxyForCredential(profile, config, credential.id);
 
     // ── Geo-consistency enforcement ───────────────────────────────────────────
     // If the selected proxy has a known country code, patch the fingerprint
@@ -1490,6 +1568,8 @@ export class LoginRunner {
       run_id: run.id,
       credential_id: credential.id,
       profile_id: profile.id,
+      proxy_id: proxy?.server ?? null,
+      attempt_index: credential.attempts,
     });
 
     const startedAt = now();
@@ -1538,6 +1618,20 @@ export class LoginRunner {
 
         // Check if rotation threshold exceeded - use unique fingerprint rotation
         if (count >= config.soft_signal_threshold) {
+          const usingPool = (config.proxy_pool?.length ?? 0) > 0;
+          const oldProxyServer = proxy?.server ?? null;
+          if (useNord) {
+            const country = config.nord_country ?? "Australia";
+            await nordRotate(country);
+          } else if (usingPool) {
+            proxy = this._rotateProxyPool(
+              run,
+              credential.id,
+              profile.id,
+              sig as RotationTrigger,
+            );
+          }
+
           const rotated = await this._rotateWithUniqueFingerprint(
             run,
             credential,
@@ -1552,8 +1646,12 @@ export class LoginRunner {
               credential_id: credential.id,
               old_profile_id: adjustedProfile.id,
               new_profile_id: rotated.id,
-              old_proxy_id: proxy?.server ?? null,
-              new_proxy_id: this._resolveProxy(rotated)?.server ?? null,
+              old_proxy_id: oldProxyServer,
+              new_proxy_id: useNord
+                ? "nord:" + (config.nord_country ?? "Australia")
+                : usingPool
+                  ? (proxy?.server ?? null)
+                  : (this._resolveProxy(rotated)?.server ?? null),
               details: `Soft signal threshold exceeded (${count}× ${sig}), aggression=${this._aggressionFactor.toFixed(2)}`,
             };
             rotationEvents.push(evt);
@@ -1575,6 +1673,19 @@ export class LoginRunner {
       ) {
         this._consecutiveFailures++;
         if (this._consecutiveFailures >= 3) {
+          const usingPool = (config.proxy_pool?.length ?? 0) > 0;
+          const oldProxyServer = proxy?.server ?? null;
+          if (useNord) {
+            const country = config.nord_country ?? "Australia";
+            await nordRotate(country);
+          } else if (usingPool) {
+            proxy = this._rotateProxyPool(
+              run,
+              credential.id,
+              profile.id,
+              "consecutive_failures",
+            );
+          }
           const rotated = await this._rotateWithUniqueFingerprint(
             run,
             credential,
@@ -1588,8 +1699,12 @@ export class LoginRunner {
               credential_id: credential.id,
               old_profile_id: profile.id,
               new_profile_id: rotated.id,
-              old_proxy_id: proxy?.server ?? null,
-              new_proxy_id: this._resolveProxy(rotated)?.server ?? null,
+              old_proxy_id: oldProxyServer,
+              new_proxy_id: useNord
+                ? "nord:" + (config.nord_country ?? "Australia")
+                : usingPool
+                  ? (proxy?.server ?? null)
+                  : (this._resolveProxy(rotated)?.server ?? null),
               details: `${this._consecutiveFailures} consecutive failures, aggression=${this._aggressionFactor.toFixed(2)}`,
             };
             rotationEvents.push(evt);
@@ -1794,8 +1909,78 @@ export class LoginRunner {
   private _resolveProxy(profile: Profile): ProxyConfig | null {
     if (!profile.proxy_id) return null;
     const p = this.proxies.find((x) => x.id === profile.proxy_id);
-    if (!p || !p.healthy) return null;
+    if (!p) return null;
+    // Do not hard-block proxy usage based on cached health state.
+    // Health checks can produce false negatives for some residential/mobile pools.
+    // We still attempt to use the assigned proxy and let runtime signals decide.
     return { server: p.server, username: p.username, password: p.password };
+  }
+
+  private _resolveProxyForCredential(
+    profile: Profile,
+    config: LoginRunConfig,
+    credentialId: string,
+  ): ProxyConfig | null {
+    const pool = config.proxy_pool ?? [];
+    if (pool.length > 0) {
+      const existingId = this._credProxyId.get(credentialId);
+      const useId =
+        existingId ?? this._assignNextProxyId(credentialId, pool) ?? null;
+      if (!useId) return null;
+      const p = this.proxies.find((x) => x.id === useId);
+      if (!p) return null;
+      return { server: p.server, username: p.username, password: p.password };
+    }
+    return this._resolveProxy(profile);
+  }
+
+  private _assignNextProxyId(
+    credentialId: string,
+    pool: string[],
+  ): string | null {
+    const ids = pool.filter(Boolean);
+    if (ids.length === 0) return null;
+    const id = ids[this._proxyPoolIdx % ids.length];
+    this._proxyPoolIdx = (this._proxyPoolIdx + 1) % ids.length;
+    this._credProxyId.set(credentialId, id);
+    return id;
+  }
+
+  private _rotateProxyPool(
+    run: LoginRun,
+    credentialId: string,
+    profileId: string,
+    trigger: RotationTrigger,
+  ): ProxyConfig | null {
+    const pool = run.config.proxy_pool ?? [];
+    if (pool.length === 0) return null;
+
+    const oldId = this._credProxyId.get(credentialId) ?? null;
+    const oldProxy = oldId ? this.proxies.find((p) => p.id === oldId) : null;
+
+    const newId = this._assignNextProxyId(credentialId, pool);
+    const newProxy = newId ? this.proxies.find((p) => p.id === newId) : null;
+
+    const evt: RotationEvent = {
+      ts: Date.now(),
+      trigger,
+      credential_id: credentialId,
+      old_profile_id: profileId,
+      new_profile_id: profileId,
+      old_proxy_id: oldProxy?.server ?? null,
+      new_proxy_id: newProxy?.server ?? null,
+      details: `Proxy pool rotation (${trigger})`,
+    };
+    run.rotation_log.push(evt);
+    run.stats = computeRunStats(run.credentials, run.results, run.rotation_log);
+    this.broadcast({ type: "login_rotation", run_id: run.id, event: evt });
+
+    if (!newProxy) return null;
+    return {
+      server: newProxy.server,
+      username: newProxy.username,
+      password: newProxy.password,
+    };
   }
 
   private _outcomeToCredStatus(outcome: AttemptOutcome): CredentialStatus {

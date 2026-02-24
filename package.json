@@ -15,7 +15,10 @@
     "tauri": "tauri",
     "scraper": "tsx scripts/scraper.ts",
     "bridge": "tsx playwright-bridge/index.ts",
-    "bridge:dev": "tsx --watch playwright-bridge/index.ts"
+    "bridge:dev": "tsx --watch playwright-bridge/index.ts",
+    "automation:test": "tsx scripts/test-login-credentials.ts",
+    "automation:test:nord": "tsx scripts/test-login-credentials.ts --nord",
+    "automation:test:fast": "tsx scripts/test-login-credentials.ts --clicks 1 --delay 500"
   },
   "license": "MIT",
   "dependencies": {

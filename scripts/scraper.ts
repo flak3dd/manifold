@@ -34,7 +34,18 @@ interface WsUrlTestRequest {
   password?: string;
 }
 
-type WsClientMessage = WsScrapeRequest | WsPingMessage | WsUrlTestRequest;
+interface WsScrapeFormRequest {
+  type: "scrape_form";
+  requestId: string;
+  url: string;
+  timeout?: number;
+}
+
+type WsClientMessage =
+  | WsScrapeRequest
+  | WsPingMessage
+  | WsUrlTestRequest
+  | WsScrapeFormRequest;
 
 interface UrlTestResult {
   name: string;
@@ -117,6 +128,34 @@ interface UrlTestLoginResult {
 
   /** Rate-limit or lockout signals detected after submit */
   rateLimitSignals?: string[];
+}
+
+interface ScrapedFormSelectors {
+  url: string;
+  username_selector?: string;
+  password_selector?: string;
+  submit_selector?: string;
+  success_selector?: string;
+  failure_selector?: string;
+  captcha_selector?: string;
+  consent_selector?: string;
+  totp_selector?: string;
+  mfa_selector?: string;
+  confidence: number;
+  details: string[];
+  isSPA?: boolean;
+  spaFramework?: string;
+  hasCaptcha?: boolean;
+  captchaProviders?: string[];
+  hasMFA?: boolean;
+  mfaType?:
+    | "totp"
+    | "sms"
+    | "email"
+    | "push"
+    | "security_key"
+    | "unknown";
+  error?: string;
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -265,6 +304,21 @@ async function runUrlTest(
   const totalTests = hasLogin ? 15 : 14;
   let testIndex = 0;
 
+  function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`${label} timed out after ${ms}ms`));
+      }, ms);
+      p.then((v) => {
+        clearTimeout(timer);
+        resolve(v);
+      }).catch((e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
+    });
+  }
+
   function progress(name: string, status: "running" | "done" = "running") {
     send(socket, {
       type: "url_test_progress",
@@ -311,20 +365,35 @@ async function runUrlTest(
     `START  testId=${testId}  url=${targetUrl}  login=${hasLogin}`,
   );
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-blink-features=AutomationControlled",
-      "--window-size=1440,900",
-    ],
-  });
-
+  let browser: any = null;
   try {
-    const context = await browser.newContext({
+    // If Playwright is missing / cannot launch, we want to fail fast and send
+    // a url_test_error instead of hanging forever (no UI progress).
+    testIndex = 0;
+    progress("Starting headless browser");
+
+    browser = await withTimeout(
+      chromium.launch({
+        headless: true,
+        // Playwright supports a launch timeout, but this extra guard protects
+        // against any edge-case hangs.
+        timeout: URL_TEST_TIMEOUT_MS,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--disable-blink-features=AutomationControlled",
+          "--window-size=1440,900",
+        ],
+      }),
+      URL_TEST_TIMEOUT_MS,
+      "Browser launch",
+    );
+    progress("Starting headless browser", "done");
+
+    const context = await withTimeout(
+      browser.newContext({
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
         "AppleWebKit/537.36 (KHTML, like Gecko) " +
@@ -335,9 +404,19 @@ async function runUrlTest(
       colorScheme: "light",
       ignoreHTTPSErrors: false,
       extraHTTPHeaders: { "Accept-Language": "en-AU,en;q=0.9" },
-    });
+      }),
+      URL_TEST_TIMEOUT_MS,
+      "Browser context init",
+    );
 
-    const page = await context.newPage();
+    const page = await withTimeout(
+      context.newPage(),
+      URL_TEST_TIMEOUT_MS,
+      "New page",
+    );
+    // Ensure any future waits can't hang forever.
+    page.setDefaultTimeout(URL_TEST_TIMEOUT_MS);
+    page.setDefaultNavigationTimeout(URL_TEST_TIMEOUT_MS);
 
     const networkRequests: {
       url: string;
@@ -416,7 +495,6 @@ async function runUrlTest(
 
     if (!pageLoadOk) {
       finalize();
-      await browser.close();
       return;
     }
 
@@ -1999,7 +2077,329 @@ async function runUrlTest(
       message: `URL test failed: ${String(e).slice(0, 500)}`,
     });
   } finally {
-    await browser.close();
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+// ── Form selector scrape runner ───────────────────────────────────────────────
+
+async function runScrapeForm(
+  requestId: string,
+  targetUrl: string,
+  timeoutMs: number,
+  socket: WebSocket,
+): Promise<void> {
+  const details: string[] = [];
+  const t0 = Date.now();
+  let browser: any = null;
+
+  function done(result: ScrapedFormSelectors) {
+    send(socket, { type: "scrape_form_result", requestId, result });
+  }
+
+  function guessSelector(el: any): string | undefined {
+    if (!el) return undefined;
+    if (el.id) return `#${el.id}`;
+    const tag = el.tag?.toLowerCase?.() ?? el.tagName?.toLowerCase?.() ?? "input";
+    const type = el.type ? `[type="${el.type}"]` : "";
+    const name = el.name ? `[name="${el.name}"]` : "";
+    if (tag && (name || type)) return `${tag}${type}${name}`;
+    return tag;
+  }
+
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      timeout: timeoutMs,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--disable-blink-features=AutomationControlled",
+        "--window-size=1440,900",
+      ],
+    });
+
+    const context = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      locale: "en-US",
+    });
+    const page = await context.newPage();
+    page.setDefaultTimeout(timeoutMs);
+    page.setDefaultNavigationTimeout(timeoutMs);
+
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+    // Give SPAs a breath to render the login form.
+    await page.waitForTimeout(1200);
+
+    // If the login form is hidden behind a modal/menu, try to open it.
+    // Best-effort; ignore failures.
+    try {
+      const pwCount = await page.locator('input[type="password"]').count();
+      if (pwCount === 0) {
+        const trigger = page
+          .locator("button, a, [role='button']")
+          .filter({ hasText: /log in|login|sign in|sign-in|account/i })
+          .first();
+        if ((await trigger.count()) > 0) {
+          await trigger.click({ timeout: 1500 });
+          await page.waitForTimeout(900);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    // Avoid passing a compiled function into evaluate (tsx/esbuild can inject helpers
+    // like `__name(...)` that don't exist in the browser context).
+    const SCRAPE_FORM_EVAL_FN: any = new Function(`
+      return (() => {
+        function isVisible(el) {
+          const style = window.getComputedStyle(el);
+          if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+          const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+          if (!rect) return true;
+          if (rect.width > 0 && rect.height > 0) return true;
+          const tag = (el.tagName || "").toLowerCase();
+          return tag === "input" || tag === "textarea";
+        }
+
+        function queryAllDeep(selector) {
+          const out = [];
+          const queue = [document];
+          const seen = new Set();
+          while (queue.length) {
+            const root = queue.shift();
+            try {
+              out.push(...Array.from(root.querySelectorAll(selector)));
+            } catch {}
+            const elems = Array.from(root.querySelectorAll("*"));
+            for (const el of elems) {
+              const sr = el.shadowRoot;
+              if (sr && !seen.has(sr)) {
+                seen.add(sr);
+                queue.push(sr);
+              }
+            }
+            if (out.length > 5000) break;
+          }
+          return out;
+        }
+
+        function pickBest(els, score) {
+          let best = null;
+          let bestScore = -1;
+          for (const el of els) {
+            const s = score(el);
+            if (s > bestScore) {
+              bestScore = s;
+              best = el;
+            }
+          }
+          return best;
+        }
+
+        function cssFor(el) {
+          if (!el) return undefined;
+          const id = el.id;
+          if (id) return "#" + CSS.escape(id);
+          const tag = (el.tagName || "div").toLowerCase();
+          const name = el.getAttribute && el.getAttribute("name");
+          const aria = el.getAttribute && el.getAttribute("aria-label");
+          const ph = el.getAttribute && el.getAttribute("placeholder");
+          const type = el.getAttribute && el.getAttribute("type");
+          const ac = el.getAttribute && el.getAttribute("autocomplete");
+          if (name) return tag + "[name=\\"" + CSS.escape(name) + "\\"]";
+          if (ac && tag === "input") return "input[autocomplete=\\"" + CSS.escape(ac) + "\\"]";
+          if (type && tag === "input") return "input[type=\\"" + CSS.escape(type) + "\\"]";
+          if (aria) return tag + "[aria-label=\\"" + CSS.escape(aria) + "\\"]";
+          if (ph && tag === "input") return "input[placeholder=\\"" + CSS.escape(ph) + "\\"]";
+          const cls = (el.className && el.className.toString && el.className.toString().trim()) || "";
+          const first = cls.split(/\\s+/g).filter(Boolean)[0];
+          if (first) return tag + "." + CSS.escape(first);
+          return tag;
+        }
+
+        const inputs = queryAllDeep("input, textarea, [contenteditable='true']").filter(isVisible);
+        const buttons = queryAllDeep("button, input[type='submit'], a, [role='button']").filter(isVisible);
+
+        const username = pickBest(inputs, (el) => {
+          const tag = (el.tagName || "").toLowerCase();
+          const t = ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+          const n = ((el.getAttribute && el.getAttribute("name")) || "").toLowerCase();
+          const i = ((el.getAttribute && el.getAttribute("id")) || "").toLowerCase();
+          const p = ((el.getAttribute && el.getAttribute("placeholder")) || "").toLowerCase();
+          const a = ((el.getAttribute && el.getAttribute("aria-label")) || "").toLowerCase();
+          const ac = ((el.getAttribute && el.getAttribute("autocomplete")) || "").toLowerCase();
+          const im = ((el.getAttribute && el.getAttribute("inputmode")) || "").toLowerCase();
+          let s = 0;
+          if (tag === "textarea") s -= 5;
+          if (t === "email") s += 60;
+          if (im === "email") s += 20;
+          if (t === "text" || t === "") s += 20;
+          if (ac.includes("username") || ac.includes("email")) s += 45;
+          if (n.includes("email") || i.includes("email") || p.includes("email") || a.includes("email")) s += 40;
+          if (n.includes("user") || i.includes("user") || p.includes("user") || a.includes("user")) s += 25;
+          if (n.includes("login") || i.includes("login")) s += 10;
+          return s;
+        });
+
+        const password = pickBest(inputs, (el) => {
+          const tag = (el.tagName || "").toLowerCase();
+          const t = ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+          const n = ((el.getAttribute && el.getAttribute("name")) || "").toLowerCase();
+          const i = ((el.getAttribute && el.getAttribute("id")) || "").toLowerCase();
+          const p = ((el.getAttribute && el.getAttribute("placeholder")) || "").toLowerCase();
+          const a = ((el.getAttribute && el.getAttribute("aria-label")) || "").toLowerCase();
+          const ac = ((el.getAttribute && el.getAttribute("autocomplete")) || "").toLowerCase();
+          let s = 0;
+          if (tag === "textarea") s -= 10;
+          if (t === "password") s += 90;
+          if (ac.includes("current-password") || ac.includes("new-password")) s += 55;
+          if (n.includes("pass") || i.includes("pass") || p.includes("pass") || a.includes("pass")) s += 25;
+          return s;
+        });
+
+        const submit = pickBest(buttons, (el) => {
+          const tag = (el.tagName || "").toLowerCase();
+          const t = ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+          const txt = ((el.textContent || "") + "").toLowerCase();
+          const aria = ((el.getAttribute && el.getAttribute("aria-label")) || "").toLowerCase();
+          let s = 0;
+          if (t === "submit") s += 55;
+          if (tag === "button") s += 20;
+          if (tag === "a") s += 10;
+          if (/sign in|log in|login|submit|continue|next/.test(txt)) s += 35;
+          if (/sign in|log in|login/.test(aria)) s += 15;
+          return s;
+        });
+
+        const captchaEl =
+          document.querySelector("iframe[src*='recaptcha'], iframe[src*='hcaptcha'], iframe[src*='turnstile']") ||
+          document.querySelector("[class*='captcha'], [class*='recaptcha'], [class*='hcaptcha'], .cf-turnstile");
+
+        const totpEl =
+          document.querySelector("input[autocomplete='one-time-code']") ||
+          document.querySelector("input[name*='otp' i], input[id*='otp' i], input[placeholder*='code' i]");
+
+        const isSPA = !!(document.querySelector("#__next") || document.querySelector("#root"));
+
+        const uSel = cssFor(username);
+        const pSel = cssFor(password);
+        const sSel = cssFor(submit);
+        const cSel = cssFor(captchaEl);
+        const tSel = cssFor(totpEl);
+
+        let confidence = 0;
+        if (uSel) confidence += 35;
+        if (pSel) confidence += 35;
+        if (sSel) confidence += 25;
+        if (uSel && pSel) confidence += 5;
+        if (uSel && pSel && sSel) confidence += 5;
+
+        const d = [];
+        d.push("frame_url=" + window.location.href);
+        d.push("candidates: inputs=" + inputs.length + " buttons=" + buttons.length);
+        if (!uSel) d.push("username not detected");
+        if (!pSel) d.push("password not detected");
+        if (!sSel) d.push("submit not detected");
+
+        return {
+          url: window.location.href,
+          username_selector: uSel,
+          password_selector: pSel,
+          submit_selector: sSel,
+          captcha_selector: cSel,
+          totp_selector: tSel,
+          confidence,
+          details: d,
+          isSPA,
+          hasCaptcha: !!captchaEl,
+          hasMFA: !!totpEl,
+        };
+      })();
+    `);
+
+    async function evalFrame(frame: any): Promise<ScrapedFormSelectors> {
+      return (await frame.evaluate(SCRAPE_FORM_EVAL_FN)) as ScrapedFormSelectors;
+    }
+
+    const frames = page.frames();
+    const framesToEval = frames.length > 0 ? frames : [page.mainFrame()];
+    const frameResults: ScrapedFormSelectors[] = [];
+    for (const f of framesToEval) {
+      try {
+        frameResults.push(await evalFrame(f));
+      } catch (e) {
+        frameResults.push({
+          url: typeof f?.url === "function" ? f.url() : targetUrl,
+          confidence: 0,
+          details: [`frame eval failed: ${String(e).slice(0, 200)}`],
+          error: String(e),
+        } as any);
+      }
+    }
+
+    details.push(
+      `frames=${frames.length} evaluated=${framesToEval.length} results=${frameResults.length}`,
+    );
+
+    for (let i = 0; i < frameResults.length; i++) {
+      const r = frameResults[i];
+      details.push(
+        `frame[${i}] conf=${r.confidence} u=${r.username_selector ? "y" : "n"} p=${r.password_selector ? "y" : "n"} s=${r.submit_selector ? "y" : "n"}`,
+      );
+    }
+
+    const result =
+      frameResults.length > 0
+        ? frameResults.reduce((best, cur) => {
+            // Prefer higher confidence. If tied, prefer the one with more selectors.
+            if (cur.confidence > best.confidence) return cur;
+            if (cur.confidence < best.confidence) return best;
+            const bestCount =
+              (best.username_selector ? 1 : 0) +
+              (best.password_selector ? 1 : 0) +
+              (best.submit_selector ? 1 : 0);
+            const curCount =
+              (cur.username_selector ? 1 : 0) +
+              (cur.password_selector ? 1 : 0) +
+              (cur.submit_selector ? 1 : 0);
+            if (curCount > bestCount) return cur;
+            return best;
+          })
+        : ({
+            url: targetUrl,
+            confidence: 0,
+            details: ["no frames evaluated (unexpected)"],
+          } as ScrapedFormSelectors);
+
+    const elapsed = Date.now() - t0;
+    details.push(`Scraped in ${elapsed}ms`);
+    result.details = [...details, ...(result.details ?? [])];
+    done(result);
+  } catch (e) {
+    done({
+      url: targetUrl,
+      confidence: 0,
+      details: [`Scrape failed: ${String(e).slice(0, 300)}`],
+      error: String(e),
+    });
+  } finally {
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {
+        /* ignore */
+      }
+    }
   }
 }
 
@@ -2073,6 +2473,38 @@ wss.on("connection", (socket: WebSocket, req) => {
             type: "url_test_error",
             testId: msg.testId,
             message: String(e),
+          });
+        },
+      );
+      return;
+    }
+
+    if (msg.type === "scrape_form") {
+      if (!msg.url) {
+        send(socket, {
+          type: "scrape_form_result",
+          requestId: msg.requestId,
+          result: {
+            url: "",
+            confidence: 0,
+            details: ["Missing required field: url"],
+            error: "Missing url",
+          },
+        });
+        return;
+      }
+      // Run scrape (non-blocking)
+      runScrapeForm(msg.requestId, msg.url, msg.timeout ?? 15_000, socket).catch(
+        (e) => {
+          send(socket, {
+            type: "scrape_form_result",
+            requestId: msg.requestId,
+            result: {
+              url: msg.url,
+              confidence: 0,
+              details: [`Scrape failed: ${String(e).slice(0, 300)}`],
+              error: String(e),
+            },
           });
         },
       );

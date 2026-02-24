@@ -8,13 +8,38 @@
  * Uses HumanBehaviorMiddleware for human-like mouse movements and typing
  * to avoid bot detection.
  *
+ * IP rotation options:
+ *   - --nord: use NordVPN CLI (nordvpn disconnect/connect) for new IP per credential
+ *   - NORD_ROTATION=1 (env): same as --nord (works on bash; use --nord on PowerShell)
+ *   - PROXY_* env vars: use HTTP proxy with session-based rotation
+ *
+ * Options:
+ *   --nord              NordVPN rotation
+ *   --nord-country X    Nord country (default Australia)
+ *   --clicks N          Login button clicks per credential (default 4, use 1 for fast)
+ *   --delay N           Delay between clicks in ms (default 2000)
+ *
  * Usage:
  *   npx tsx scripts/test-login-credentials.ts
- *
- * Or with custom credentials:
- *   npx tsx scripts/test-login-credentials.ts "email@test.com" "password123"
+ *   npm run automation:test -- --nord --clicks 1
+ *   npx tsx scripts/test-login-credentials.ts --clicks 1 --delay 500 "email@test.com" "password123"
  */
 
+import { execSync } from "node:child_process";
+
+// Parse CLI args early
+const rawArgs = process.argv.slice(2);
+if (rawArgs.includes("--nord")) {
+  process.env.NORD_ROTATION = "1";
+}
+const nordIdx = rawArgs.indexOf("--nord-country");
+if (nordIdx >= 0 && rawArgs[nordIdx + 1]) {
+  process.env.NORD_COUNTRY = rawArgs[nordIdx + 1];
+}
+const clicksIdx = rawArgs.indexOf("--clicks");
+const CLICKS_ARG = clicksIdx >= 0 && rawArgs[clicksIdx + 1] ? Number(rawArgs[clicksIdx + 1]) : null;
+const delayIdx = rawArgs.indexOf("--delay");
+const DELAY_ARG = delayIdx >= 0 && rawArgs[delayIdx + 1] ? Number(rawArgs[delayIdx + 1]) : null;
 import {
   chromium,
   type Browser,
@@ -31,15 +56,46 @@ import type { HumanBehavior } from "../playwright-bridge/types.js";
 const TARGET_URL = "https://joefortunepokies.win";
 const LOGIN_URL = "https://www.joefortunepokies.win/login";
 
-// Proxy configuration with rotation support
-const PROXY_CONFIG = {
-  host: "portal.anyip.io",
-  port: 1080,
-  username: "user_375050,type_mobile,country_AU",
-  password: "Plentyon1",
+// Nord CLI rotation (nordvpn disconnect → connect for new IP per credential)
+const USE_NORD_ROTATION =
+  process.env.NORD_ROTATION === "1" || process.env.NORD_ROTATION === "true";
+const NORD_COUNTRY = (process.env.NORD_COUNTRY ?? "Australia").trim();
+
+// Proxy configuration (used only when USE_NORD_ROTATION is false)
+type ProxyEnvConfig = {
+  server: string;
+  username: string;
+  password: string;
+  host: string;
+  port: number;
 };
 
-const USE_PROXY = true;
+function readProxyFromEnv(): ProxyEnvConfig | null {
+  const host = (process.env.PROXY_HOST ?? "").trim();
+  const port = Number.parseInt(process.env.PROXY_PORT ?? "", 10);
+  const username = (process.env.PROXY_USERNAME ?? "").trim();
+  const password = (process.env.PROXY_PASSWORD ?? "").trim();
+  const scheme = (process.env.PROXY_SCHEME ?? "http").trim();
+
+  if (!host && !process.env.PROXY_PORT && !username && !password) return null;
+
+  if (!host || !Number.isFinite(port) || port < 1 || port > 65535 || !username || !password) {
+    throw new Error(
+      "Invalid proxy env vars. Set: PROXY_HOST, PROXY_PORT, PROXY_USERNAME, PROXY_PASSWORD (optional PROXY_SCHEME=http|https|socks5).",
+    );
+  }
+
+  return {
+    server: `${scheme}://${host}:${port}`,
+    username,
+    password,
+    host,
+    port,
+  };
+}
+
+const PROXY_CONFIG = readProxyFromEnv();
+const USE_PROXY = !USE_NORD_ROTATION && PROXY_CONFIG !== null;
 
 // Generate a unique session ID for proxy rotation
 function generateProxySession(): string {
@@ -48,19 +104,69 @@ function generateProxySession(): string {
 
 // Get proxy config with rotated session
 function getRotatedProxyConfig(sessionId: string) {
+  if (!PROXY_CONFIG) {
+    throw new Error("getRotatedProxyConfig called without PROXY_CONFIG");
+  }
   return {
-    server: `http://${PROXY_CONFIG.host}:${PROXY_CONFIG.port}`,
-    // Append session ID to username to force new IP
+    server: PROXY_CONFIG.server,
     username: `${PROXY_CONFIG.username},session_${sessionId}`,
     password: PROXY_CONFIG.password,
   };
 }
 
-// Number of login button clicks per credential pair
-const CLICKS_PER_CREDENTIAL = 4;
+// ── Nord CLI rotation ────────────────────────────────────────────────────────
 
-// Delay between clicks (ms)
-const CLICK_DELAY_MS = 2000;
+async function nordRotate(): Promise<string | null> {
+  if (!USE_NORD_ROTATION) return null;
+
+  const t0 = Date.now();
+  let nordCli = "nordvpn";
+
+  try {
+    // Try to find nordvpn in PATH or common Windows paths
+    try {
+      execSync("nordvpn --version", { stdio: "pipe" });
+    } catch {
+      const winPaths = [
+        process.env["ProgramFiles"] + "\\NordVPN\\NordVPN.exe",
+        process.env["ProgramFiles(x86)"] + "\\NordVPN\\NordVPN.exe",
+      ].filter(Boolean);
+      for (const p of winPaths) {
+        try {
+          execSync(`"${p}" --version`, { stdio: "pipe" });
+          nordCli = `"${p}"`;
+          break;
+        } catch {
+          /* try next */
+        }
+      }
+    }
+
+    execSync(`${nordCli} disconnect`, {
+      stdio: "pipe",
+      timeout: 15_000,
+    });
+    await new Promise((r) => setTimeout(r, 2500));
+
+    const countryArg = NORD_COUNTRY ? `-g "${NORD_COUNTRY}"` : "";
+    execSync(`${nordCli} connect ${countryArg}`.trim(), {
+      stdio: "pipe",
+      timeout: 30_000,
+    });
+    await new Promise((r) => setTimeout(r, 1500));
+
+    return `${NORD_COUNTRY} @ ${Date.now() - t0}ms`;
+  } catch (e) {
+    console.warn("[nord] Rotation failed:", e);
+    return null;
+  }
+}
+
+// Number of login button clicks per credential pair (--clicks N, default 4)
+const CLICKS_PER_CREDENTIAL = CLICKS_ARG != null && CLICKS_ARG >= 1 ? CLICKS_ARG : 4;
+
+// Delay between clicks (ms) (--delay N, default 2000)
+const CLICK_DELAY_MS = DELAY_ARG != null && DELAY_ARG >= 0 ? DELAY_ARG : 2000;
 
 // Test credentials - add your credential pairs here
 const TEST_CREDENTIALS: Array<{
@@ -368,9 +474,21 @@ async function testCredentialPair(
   sessionId: string,
   credIndex: number,
 ): Promise<CredentialTestResult> {
-  // Rotate proxy for this credential pair
-  const proxySession = generateProxySession();
-  const rotatedProxy = getRotatedProxyConfig(proxySession);
+  // Rotate IP for this credential pair: Nord CLI, proxy session, or direct
+  let proxySession: string;
+  if (USE_NORD_ROTATION) {
+    log(`Rotating NordVPN (${NORD_COUNTRY})...`);
+    const nordResult = await nordRotate();
+    proxySession = nordResult ?? `nord-fail-${Date.now()}`;
+    if (nordResult) {
+      log(`NordVPN rotated: ${nordResult}`, "success");
+    }
+  } else if (USE_PROXY) {
+    proxySession = generateProxySession();
+  } else {
+    proxySession = "direct";
+  }
+  const rotatedProxy = USE_PROXY ? getRotatedProxyConfig(proxySession) : null;
 
   const result: CredentialTestResult = {
     email,
@@ -384,13 +502,21 @@ async function testCredentialPair(
 
   log(`\n${"─".repeat(70)}`);
   log(`Testing: ${label} (${email})`);
-  log(`Proxy Session: ${proxySession} (new IP for this credential pair)`);
+  log(
+    `IP: ${
+      USE_NORD_ROTATION
+        ? `NordVPN (${NORD_COUNTRY})`
+        : USE_PROXY
+          ? `Proxy Session ${proxySession}`
+          : "Direct (no rotation)"
+    }`,
+  );
   log(`Using HUMANIZED interactions to avoid bot detection`);
   log(`${"─".repeat(70)}`);
 
-  // Create new context with rotated proxy
+  // Create new context (proxy only when not using Nord rotation)
   const contextOptions: Parameters<typeof browser.newContext>[0] = {
-    ...(USE_PROXY && {
+    ...(USE_PROXY && rotatedProxy && {
       proxy: {
         server: rotatedProxy.server,
         username: rotatedProxy.username,
@@ -414,7 +540,9 @@ async function testCredentialPair(
   const humanSeed = Date.now() + credIndex * 1000;
   const human = new HumanBehaviorMiddleware(page, HUMAN_CONFIG, humanSeed);
 
-  log(`New browser context created with rotated proxy`);
+  log(
+    `New browser context created (${USE_NORD_ROTATION ? "NordVPN" : USE_PROXY ? "proxy" : "direct"})`,
+  );
   log(`Human behavior middleware initialized (seed: ${humanSeed})`);
 
   // Navigate to login page
@@ -721,10 +849,20 @@ async function runLoginCredentialTests(): Promise<TestSummary> {
   log(`Clicks per credential: ${CLICKS_PER_CREDENTIAL}`);
   log(`Total attempts: ${summary.totalAttempts}`);
   log(
-    `Proxy: ${USE_PROXY ? `${PROXY_CONFIG.host}:${PROXY_CONFIG.port}` : "None"}`,
+    `IP rotation: ${
+      USE_NORD_ROTATION
+        ? `NordVPN CLI (${NORD_COUNTRY})`
+        : USE_PROXY && PROXY_CONFIG
+          ? `Proxy ${PROXY_CONFIG.host}:${PROXY_CONFIG.port}`
+          : "None"
+    }`,
   );
   log(
-    `Proxy Rotation: ${USE_PROXY ? "ENABLED (new IP per credential pair)" : "N/A"}`,
+    `Rotation: ${
+      USE_NORD_ROTATION || USE_PROXY
+        ? "ENABLED (new IP per credential pair)"
+        : "N/A"
+    }`,
   );
   log(`Humanization: ENABLED (HumanBehaviorMiddleware)`);
   log(`  - Mouse: Bézier curves, overshoot, micro-jitter`);
@@ -756,7 +894,7 @@ async function runLoginCredentialTests(): Promise<TestSummary> {
       const label = cred.label || `Credential ${i + 1}`;
 
       log(
-        `\n[${i + 1}/${TEST_CREDENTIALS.length}] Testing credential pair with NEW proxy session...`,
+        `\n[${i + 1}/${TEST_CREDENTIALS.length}] Testing credential pair (${USE_NORD_ROTATION ? "NordVPN" : "proxy"} rotation)...`,
       );
 
       const result = await testCredentialPair(
@@ -770,10 +908,13 @@ async function runLoginCredentialTests(): Promise<TestSummary> {
       summary.results.push(result);
       summary.proxySessions.push(result.proxySession);
 
-      // Brief pause between credential pairs to allow proxy rotation
+      // Brief pause between credential pairs for rotation cooldown
       if (i < TEST_CREDENTIALS.length - 1) {
-        log(`Waiting before next credential pair (proxy cooldown)...`);
-        await sleep(2000);
+        const cooldownMs = USE_NORD_ROTATION ? 3000 : 2000;
+        log(
+          `Waiting ${cooldownMs}ms before next credential pair (cooldown)...`,
+        );
+        await sleep(cooldownMs);
       }
     }
   } catch (e) {
@@ -854,7 +995,7 @@ function printSummaryReport(summary: TestSummary): void {
   log(`Successful logins: ${successfulLogins}/${summary.totalCredentialPairs}`);
   log(`Total unique errors collected: ${totalErrors}`);
   log(
-    `Proxy sessions used: ${summary.totalCredentialPairs} (one per credential pair)`,
+    `Sessions used: ${summary.totalCredentialPairs} (one per credential pair)`,
   );
   log(`Humanization: All interactions used human-like behavior`);
 
@@ -882,14 +1023,22 @@ function printSummaryReport(summary: TestSummary): void {
 // Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Check for command line arguments for custom credentials
-const args = process.argv.slice(2);
-if (args.length >= 2) {
+// Check for command line arguments for custom credentials (exclude flags)
+const credArgs: string[] = [];
+for (let i = 0; i < rawArgs.length; i++) {
+  if (rawArgs[i] === "--nord") continue;
+  if (rawArgs[i] === "--nord-country" || rawArgs[i] === "--clicks" || rawArgs[i] === "--delay") {
+    i++;
+    continue;
+  }
+  credArgs.push(rawArgs[i]);
+}
+if (credArgs.length >= 2) {
   TEST_CREDENTIALS.length = 0; // Clear default credentials
   TEST_CREDENTIALS.push({
-    email: args[0],
-    password: args[1],
-    label: args[2] || "Custom Credential",
+    email: credArgs[0],
+    password: credArgs[1],
+    label: credArgs[2] || "Custom Credential",
   });
 }
 
