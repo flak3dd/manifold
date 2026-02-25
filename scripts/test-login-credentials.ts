@@ -142,17 +142,20 @@ async function nordRotate(): Promise<string | null> {
       }
     }
 
-    execSync(`${nordCli} disconnect`, {
-      stdio: "pipe",
-      timeout: 15_000,
-    });
+    const isWin = process.platform === "win32";
+    if (isWin) {
+      execSync(`${nordCli} -d`, { stdio: "pipe", timeout: 15_000 });
+    } else {
+      execSync(`${nordCli} disconnect`, { stdio: "pipe", timeout: 15_000 });
+    }
     await new Promise((r) => setTimeout(r, 2500));
 
-    const countryArg = NORD_COUNTRY ? `-g "${NORD_COUNTRY}"` : "";
-    execSync(`${nordCli} connect ${countryArg}`.trim(), {
-      stdio: "pipe",
-      timeout: 30_000,
-    });
+    const countryArg = NORD_COUNTRY ? (isWin ? `-g "${NORD_COUNTRY}"` : `--group "${NORD_COUNTRY}"`) : "";
+    if (isWin) {
+      execSync(`${nordCli} -c ${countryArg}`.trim(), { stdio: "pipe", timeout: 30_000 });
+    } else {
+      execSync(`${nordCli} connect ${countryArg}`.trim(), { stdio: "pipe", timeout: 30_000 });
+    }
     await new Promise((r) => setTimeout(r, 1500));
 
     return `${NORD_COUNTRY} @ ${Date.now() - t0}ms`;

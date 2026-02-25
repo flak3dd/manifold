@@ -303,6 +303,14 @@ export interface LoginRunConfig {
   nord_country?: string;
 
   /**
+   * For wrong-password flow: number of times to click the login button before
+   * reading the final error. Some sites only show the definitive error after
+   * multiple failed submits. Default 3 (click, read error, click, read, click, final error).
+   * Account disabled/locked always exits immediately (no extra clicks).
+   */
+  wrong_password_submit_clicks?: number;
+
+  /**
    * If true, fingerprint and proxy are rotated between every attempt,
    * regardless of soft signals.
    */

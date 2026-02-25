@@ -71,31 +71,58 @@ function now(): string {
 
 /** NordVPN CLI rotation: disconnect then connect to get new IP */
 async function nordRotate(country: string = "Australia"): Promise<boolean> {
-  let nordCli = "nordvpn";
+  const isWin = process.platform === "win32";
+  let nordCli = isWin ? "" : "nordvpn";
+
   try {
-    try {
-      execSync("nordvpn --version", { stdio: "pipe" });
-    } catch {
-      const pf = process.env["ProgramFiles"];
-      const pf86 = process.env["ProgramFiles(x86)"];
-      for (const base of [pf, pf86].filter(Boolean)) {
-        const p = `${base}\\NordVPN\\NordVPN.exe`;
+    if (isWin) {
+      const pf = process.env["ProgramFiles"] ?? "C:\\Program Files";
+      const candidates = [
+        `${pf}\\NordVPN\\NordVPN.exe`,
+        `${process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)"}\\NordVPN\\NordVPN.exe`,
+      ];
+      for (const p of candidates) {
         try {
           execSync(`"${p}" --version`, { stdio: "pipe" });
           nordCli = `"${p}"`;
           break;
+        } catch { /* try next */ }
+      }
+      if (!nordCli) {
+        try {
+          execSync("nordvpn --version", { stdio: "pipe" });
+          nordCli = "nordvpn";
         } catch {
-          /* try next */
+          return false;
         }
       }
+    } else {
+      try {
+        execSync("nordvpn --version", { stdio: "pipe" });
+      } catch {
+        return false;
+      }
     }
-    execSync(`${nordCli} disconnect`, { stdio: "pipe", timeout: 15_000 });
-    await sleep(2500);
-    const countryArg = country ? `-g "${country}"` : "";
-    execSync(`${nordCli} connect ${countryArg}`.trim(), {
-      stdio: "pipe",
-      timeout: 30_000,
-    });
+
+    // Windows NordVPN CLI uses -d (disconnect) and -c (connect) flags.
+    // Linux/macOS uses subcommands: nordvpn disconnect / nordvpn connect.
+    if (isWin) {
+      execSync(`${nordCli} -d`, { stdio: "pipe", timeout: 15_000 });
+      await sleep(2500);
+      const countryArg = country ? `-g "${country}"` : "";
+      execSync(`${nordCli} -c ${countryArg}`.trim(), {
+        stdio: "pipe",
+        timeout: 30_000,
+      });
+    } else {
+      execSync(`${nordCli} disconnect`, { stdio: "pipe", timeout: 15_000 });
+      await sleep(2500);
+      const countryArg = country ? `--group "${country}"` : "";
+      execSync(`${nordCli} connect ${countryArg}`.trim(), {
+        stdio: "pipe",
+        timeout: 30_000,
+      });
+    }
     await sleep(1500);
     return true;
   } catch {
@@ -383,11 +410,11 @@ async function detectSoftSignals(
       }
     }
 
-    // Account locked signals
+    // Account locked signals (excludes "too many attempts" — that's rate_limit_response)
     const lockedPatterns = [
       /account (has been|is) (locked|suspended|banned|disabled)/i,
-      /too many (failed|incorrect) (attempts|logins)/i,
-      /temporarily (locked|disabled)/i,
+      /account (has been|is) temporarily (locked|suspended|disabled)/i,
+      /your account (has been|is) (locked|suspended|banned)/i,
     ];
     for (const pat of lockedPatterns) {
       if (pat.test(content)) {
@@ -396,9 +423,10 @@ async function detectSoftSignals(
       }
     }
 
-    // Rate limit in response body
+    // Rate limit in response body (includes "too many failed attempts" — temporary, not account lock)
     const rateLimitPatterns = [
       /too many requests/i,
+      /too many (failed|incorrect) (attempts|logins|tries)/i,
       /rate limit(ed|ing)?/i,
       /please try again (later|in \d+)/i,
       /slow down/i,
@@ -541,7 +569,7 @@ async function launchBrowser(
   const tlsArgs = patchTls && domainProfile.patch_tls ? TLS_PATCH_ARGS : [];
 
   const browser = await chromium.launch({
-    headless: false,
+    headless: true,
     args: [...baseArgs, ...tlsArgs],
     ignoreDefaultArgs: ["--enable-automation"],
   });
@@ -800,17 +828,28 @@ async function performLoginAttempt(
       );
     }
 
-    // Failure selector
+    // Failure selector — extract the actual error text
     if (form.failure_selector) {
       conditions.push(
         page
           .waitForSelector(form.failure_selector, {
             timeout: postSubmitTimeout,
           })
-          .then(() => ({
-            type: "wrong_credentials",
-            detail: "Failure selector found",
-          })),
+          .then(async (el) => {
+            const errorText = el
+              ? await el.textContent().catch(() => "")
+              : "";
+            const cleaned = (errorText ?? "")
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, 200);
+            return {
+              type: "wrong_credentials",
+              detail: cleaned
+                ? `[click 1] ${cleaned}`
+                : "[click 1] Failure selector found",
+            };
+          }),
       );
     }
 
@@ -837,17 +876,17 @@ async function performLoginAttempt(
       );
     }
 
-    // Fallback: navigation or URL change (try networkidle for full page load)
+    // Fallback: navigation or URL change (use load for consistency; networkidle can hang 30+ s on SPAs)
     conditions.push(
       page
         .waitForNavigation({
-          waitUntil: "networkidle",
+          waitUntil: "load",
           timeout: postSubmitTimeout,
         })
         .catch(() =>
           page.waitForNavigation({
             waitUntil: "domcontentloaded",
-            timeout: postSubmitTimeout / 2,
+            timeout: Math.max(3000, postSubmitTimeout / 2),
           }),
         )
         .then(() => ({
@@ -949,7 +988,14 @@ async function performLoginAttempt(
 
             if (pageSignals.includes("account_locked_signal")) {
               outcome = "account_locked";
-              detail = "Account locked signal after navigation";
+              const lockText = form.failure_selector
+                ? await page
+                    .$(form.failure_selector)
+                    .then((el) => el?.textContent() ?? "")
+                    .catch(() => "")
+                : "";
+              const cleaned = (lockText ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+              detail = `[click 1] DISABLED: ${cleaned || "account_locked_signal"}`;
             } else if (pageSignals.includes("captcha_detected")) {
               outcome = "captcha_block";
               detail = "CAPTCHA detected after navigation";
@@ -964,9 +1010,17 @@ async function performLoginAttempt(
                 const loginPath = new URL(form.url).pathname;
                 const finalPath = new URL(finalUrl).pathname;
                 if (finalHost === loginHost && finalPath === loginPath) {
-                  // Still on login page — likely failed
                   outcome = "wrong_credentials";
-                  detail = "Still on login page after submit";
+                  const navErrText = form.failure_selector
+                    ? await page
+                        .$(form.failure_selector)
+                        .then((el) => el?.textContent() ?? "")
+                        .catch(() => "")
+                    : "";
+                  const navCleaned = (navErrText ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+                  detail = navCleaned
+                    ? `[click 1] ${navCleaned}`
+                    : "[click 1] Still on login page after submit";
                 } else {
                   outcome = "success";
                   detail = `Navigated away from login: ${finalUrl}`;
@@ -1006,6 +1060,118 @@ async function performLoginAttempt(
   } catch (e) {
     outcome = "error";
     detail = `Unexpected error: ${String(e).slice(0, 300)}`;
+  }
+
+  // ── 7b. Wrong-password flow: extra clicks to get final error ────────────
+  // Captures the actual on-page error text at each step so results show:
+  //   [click 1] Wrong password    ← first submit
+  //   [click 2] Wrong password    ← second submit
+  //   [click 3] Account disabled  ← final submit → account_locked
+  // Account disabled/locked on any click exits immediately.
+  const wrongPasswordClicks = config.wrong_password_submit_clicks ?? 3;
+  if (
+    outcome === "wrong_credentials" &&
+    wrongPasswordClicks > 1 &&
+    form.submit_selector
+  ) {
+    const clickErrors: string[] = [];
+    // Capture the error text from the first submit (already done above, stored in detail)
+    clickErrors.push(detail);
+
+    let clickCount = 1;
+    const clickTimeout = Math.min(5000, postSubmitTimeout);
+
+    const isOnLoginPage = (): boolean => {
+      try {
+        const loginUrl = new URL(form.url);
+        const currentUrl = new URL(page.url());
+        return (
+          loginUrl.hostname === currentUrl.hostname &&
+          loginUrl.pathname === currentUrl.pathname
+        );
+      } catch {
+        return false;
+      }
+    };
+
+    const readErrorText = async (): Promise<string> => {
+      if (!form.failure_selector) return "";
+      try {
+        const el = await page.$(form.failure_selector);
+        if (!el) return "";
+        const raw = await el.textContent().catch(() => "");
+        return (raw ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+      } catch {
+        return "";
+      }
+    };
+
+    while (clickCount < wrongPasswordClicks) {
+      try {
+        if (!isOnLoginPage()) break;
+
+        const preSignals = await detectSoftSignals(page, config);
+        for (const s of preSignals) {
+          if (!signals.includes(s)) signals.push(s);
+        }
+        if (preSignals.includes("account_locked_signal")) {
+          const errText = await readErrorText();
+          outcome = "account_locked";
+          detail = clickErrors.join(" → ") +
+            ` → [click ${clickCount + 1}] DISABLED: ${errText || "account_locked_signal"}`;
+          break;
+        }
+
+        await sleep(seededJitter(600, 0.3, credSeed + 200 + clickCount));
+        try {
+          await human.click(form.submit_selector);
+        } catch {
+          await page.keyboard.press("Enter").catch(() => {});
+        }
+        await sleep(seededJitter(900, 0.3, credSeed + 201 + clickCount));
+
+        try {
+          if (form.failure_selector) {
+            await page
+              .waitForSelector(form.failure_selector, { timeout: clickTimeout })
+              .catch(() => {});
+          } else {
+            await page
+              .waitForNavigation({
+                waitUntil: "domcontentloaded",
+                timeout: clickTimeout,
+              })
+              .catch(() => {});
+          }
+          await sleep(1200);
+        } catch {
+          await sleep(1500);
+        }
+
+        clickCount++;
+        const errText = await readErrorText();
+        const label = `[click ${clickCount}] ${errText || "no error text"}`;
+        clickErrors.push(label);
+
+        const loopSignals = await detectSoftSignals(page, config);
+        for (const s of loopSignals) {
+          if (!signals.includes(s)) signals.push(s);
+        }
+        if (loopSignals.includes("account_locked_signal")) {
+          outcome = "account_locked";
+          detail = clickErrors.join(" → ");
+          break;
+        }
+
+        detail = clickErrors.join(" → ");
+      } catch (loopErr) {
+        clickErrors.push(
+          `[click ${clickCount + 1}] error: ${String(loopErr).slice(0, 80)}`,
+        );
+        detail = clickErrors.join(" → ");
+        break;
+      }
+    }
   }
 
   // ── 8. Post-outcome signal sweep ─────────────────────────────────────────
@@ -1730,38 +1896,46 @@ export class LoginRunner {
         result.sessionState.profile_id = profile.id;
       }
 
-      this._recordResult(
-        run,
-        credential,
-        profile,
-        proxy,
-        result.outcome,
-        result.detail,
-        result.finalUrl,
-        result.signals,
-        rotationEvents,
-        result.sessionState,
-        result.screenshot,
-        startedAt,
-        startMs,
-      );
+      try {
+        this._recordResult(
+          run,
+          credential,
+          profile,
+          proxy,
+          result.outcome,
+          result.detail,
+          result.finalUrl,
+          result.signals,
+          rotationEvents,
+          result.sessionState,
+          result.screenshot,
+          startedAt,
+          startMs,
+        );
+      } catch (recordErr) {
+        console.error("[LoginRunner] _recordResult failed:", recordErr);
+      }
     } catch (e) {
       credential.status = "error";
-      this._recordResult(
-        run,
-        credential,
-        profile,
-        proxy,
-        "error",
-        `Runner error: ${String(e).slice(0, 300)}`,
-        "",
-        [],
-        rotationEvents,
-        undefined,
-        undefined,
-        startedAt,
-        startMs,
-      );
+      try {
+        this._recordResult(
+          run,
+          credential,
+          profile,
+          proxy,
+          "error",
+          `Runner error: ${String(e).slice(0, 300)}`,
+          "",
+          [],
+          rotationEvents,
+          undefined,
+          undefined,
+          startedAt,
+          startMs,
+        );
+      } catch (recordErr) {
+        console.error("[LoginRunner] _recordResult (error path) failed:", recordErr);
+      }
     } finally {
       if (browser) {
         await browser.close().catch(() => {});

@@ -365,13 +365,17 @@ function createRun(
     .filter((p) => p.status === "idle")
     .map((p) => p.id);
 
+  const useNord = options.nord_rotation ?? false;
   const config: LoginRunConfig = {
     id,
     form: formConfig,
     profile_pool: options.profile_pool ?? defaultPool,
     proxy_pool: options.proxy_pool ?? [],
-    nord_rotation: options.nord_rotation ?? false,
+    nord_rotation: useNord,
     nord_country: options.nord_country ?? "Australia",
+    wrong_password_submit_clicks:
+      options.wrong_password_submit_clicks ??
+      (useNord ? 3 : 1),
     rotate_every_attempt: options.rotate_every_attempt ?? false,
     soft_signal_threshold: options.soft_signal_threshold ?? 1,
     max_retries: options.max_retries ?? 2,

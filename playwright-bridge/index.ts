@@ -419,7 +419,7 @@ async function launchSession(cfg: LaunchConfig): Promise<BridgeSession> {
   ];
 
   const browser = await chromium.launch({
-    headless: false,
+    headless: true,
     args: launchArgs,
     ignoreDefaultArgs: ["--enable-automation"],
   });
