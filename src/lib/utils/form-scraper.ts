@@ -6,6 +6,8 @@
  */
 
 import type { LoginFormConfig } from "../../../playwright-bridge/login-types";
+import { ws } from "$lib/websocket";
+import type { WsServerMessage, ScrapedFormSelectors as ScrapedFormSelectorsWs } from "$lib/types";
 
 export interface FormScraperOptions {
   url: string;
@@ -129,42 +131,43 @@ const SELECTOR_PATTERNS = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tauri-based form scraper
+// Scraper WS form scrape
 // ─────────────────────────────────────────────────────────────────────────────
 
-function isTauriAvailable(): boolean {
-  return typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
-}
-
-let invokeCache: typeof import("@tauri-apps/api/core").invoke | null = null;
-
-async function getInvoke() {
-  if (invokeCache) return invokeCache;
-
-  if (!isTauriAvailable()) {
-    return null;
+async function scrapeViaScraperWs(
+  url: string,
+  timeoutMs: number,
+): Promise<ScrapedFormSelectors> {
+  if (!ws.connected) {
+    throw new Error("Scraper WebSocket not connected. Start the scraper first.");
   }
 
-  try {
-    const tauriCore = await import("@tauri-apps/api/core");
-    invokeCache = tauriCore.invoke;
-    return invokeCache;
-  } catch (e) {
-    console.warn("[formScraper] Failed to import Tauri API:", e);
-    return null;
-  }
-}
+  const requestId = crypto.randomUUID();
 
-async function safeInvoke<T = unknown>(
-  cmd: string,
-  args?: Record<string, unknown>,
-): Promise<T | null> {
-  const invoke = await getInvoke();
-  if (!invoke) {
-    console.warn(`[formScraper] Tauri unavailable, skipping command: ${cmd}`);
-    return null;
-  }
-  return invoke<T>(cmd, args ?? {});
+  return new Promise<ScrapedFormSelectors>((resolve, reject) => {
+    const cleanup = () => {
+      unsubscribe();
+      clearTimeout(timer);
+    };
+
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Scraper form scrape timed out after ${timeoutMs}ms`));
+    }, Math.max(1000, timeoutMs + 1000));
+
+    const unsubscribe = ws.onMessage((msg: WsServerMessage) => {
+      if (msg.type !== "scrape_form_result") return;
+      if (msg.requestId !== requestId) return;
+      cleanup();
+      resolve(msg.result as unknown as ScrapedFormSelectorsWs as ScrapedFormSelectors);
+    });
+
+    const ok = ws.send({ type: "scrape_form", requestId, url, timeout: timeoutMs });
+    if (!ok) {
+      cleanup();
+      reject(new Error("Failed to send scrape_form to scraper (WS not open)."));
+    }
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -276,52 +279,30 @@ export async function scrapeFormSelectors(
   const timeout = options.timeout || 15000;
   const details: string[] = [];
 
-  // Check Tauri availability
-  const tauriAvailable = isTauriAvailable();
-  console.log("[formScraper] Tauri available:", tauriAvailable);
-  console.log("[formScraper] Target URL:", options.url);
-  console.log("[formScraper] Timeout:", timeout, "ms");
-  console.log("[formScraper] Options:", { waitForSPA: options.waitForSPA, detectCaptcha: options.detectCaptcha, detectMFA: options.detectMFA });
-
-  // Try Tauri-based scraping first (most reliable for dynamic content)
-  if (tauriAvailable) {
-    try {
-      console.log("[formScraper] Attempting Tauri-based form scraping...");
-      const result = await safeInvoke<ScrapedFormSelectors>(
-        "scrape_form_selectors",
-        {
-          url: options.url,
-          timeout,
-          wait_for_spa: options.waitForSPA ?? true,
-          detect_captcha: options.detectCaptcha ?? true,
-          detect_mfa: options.detectMFA ?? true,
-        },
-      );
-
-      if (result && result.confidence > 0) {
-        console.log("[formScraper] ✅ Successfully scraped selectors using Tauri");
-        console.log("[formScraper] Confidence:", result.confidence);
-        console.log("[formScraper] Detected fields:", {
-          username: result.username_selector ? "✓" : "✗",
-          password: result.password_selector ? "✓" : "✗",
-          submit: result.submit_selector ? "✓" : "✗",
-          success: result.success_selector ? "✓" : "✗",
-          captcha: result.captcha_selector ? "✓" : "✗",
-          mfa: result.mfa_selector ? "✓" : "✗",
-        });
-        return result;
-      } else if (result) {
-        details.push("Tauri scraping returned low confidence result");
-        console.warn("[formScraper] Tauri scraping succeeded but confidence is low:", result.confidence);
-      }
-    } catch (e) {
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      console.warn("[formScraper] Tauri scraping failed:", errorMsg);
-      details.push(`Tauri scraping error: ${errorMsg}`);
+  // Primary: scraper WS (headless Playwright sidecar)
+  try {
+    const result = await scrapeViaScraperWs(options.url, timeout);
+    if (result && result.confidence > 0) {
+      details.push("Detected using scraper sidecar (headless)");
+      return { ...result, details: [...details, ...(result.details ?? [])] };
     }
-  } else {
-    console.log("[formScraper] ℹ️ Tauri bridge not available, skipping Tauri scraping");
-    details.push("Tauri bridge not available (backend scraping disabled)");
+    if (result) {
+      details.push(
+        `Scraper sidecar returned low confidence (confidence=${result.confidence})`,
+      );
+      // Keep any sidecar hints so the UI can show something actionable.
+      if (Array.isArray((result as any).details) && (result as any).details.length > 0) {
+        details.push(...((result as any).details as string[]).slice(0, 3));
+      } else {
+        details.push(
+          "Tip: try using the site’s direct login URL (often /login or /signin)",
+        );
+      }
+    } else {
+      details.push("Scraper sidecar returned no result");
+    }
+  } catch (e) {
+    details.push(`Scraper sidecar error: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   // Fallback 1: playwright bridge WebSocket (works when npm run bridge is running)

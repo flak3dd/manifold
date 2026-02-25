@@ -13,7 +13,10 @@ import type {
 // ── Tauri availability and dynamic import ──────────────────────────────────
 
 function isTauriAvailable(): boolean {
-  return typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
+  if (typeof window === "undefined") return false;
+  // Tauri v2 uses __TAURI_INTERNALS__; some builds/tooling also expose __TAURI__.
+  const w = window as any;
+  return !!w.__TAURI_INTERNALS__ || !!w.__TAURI__;
 }
 
 let invokeCache: typeof import("@tauri-apps/api/core").invoke | null = null;
@@ -45,6 +48,16 @@ async function safeInvoke<T = unknown>(
     return null;
   }
   return invoke<T>(cmd, args ?? {});
+}
+
+async function requireInvoke() {
+  const invoke = await getInvoke();
+  if (!invoke) {
+    throw new Error(
+      "Tauri unavailable. You’re likely running the web UI in a browser tab. Launch the desktop app via `npm run tauri dev` (or run the built .exe) to add/check proxies.",
+    );
+  }
+  return invoke;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -92,6 +105,78 @@ export function buildBrightDataRotating(
     password: cfg.password,
     country: cfg.country || undefined,
   };
+}
+
+/**
+ * Parse a connection string into AddProxyPayload.
+ * Format: host:port:username:password
+ * Username and password may contain colons; we treat the first two segments as host/port,
+ * the last segment as password, and everything between as username.
+ * Example: proxy.example.com:1080:USERNAME:PASSWORD
+ */
+export function parseProxyConnectionString(
+  s: string,
+  options?: { name?: string; proxy_type?: "http" | "https" | "socks5" },
+): AddProxyPayload | null {
+  const raw = s.trim();
+  if (!raw) return null;
+  const parts = raw.split(":");
+  if (parts.length < 4) return null;
+  const host = parts[0].trim();
+  const portStr = parts[1].trim();
+  const port = parseInt(portStr, 10);
+  if (!host || isNaN(port) || port < 1 || port > 65535) return null;
+  const password = parts[parts.length - 1].trim();
+  const username = parts.slice(2, -1).join(":").trim();
+  const name =
+    options?.name ??
+    (`${host}:${port}${username ? " (auth)" : ""}`.trim() || `${host}:${port}`);
+  return {
+    name,
+    proxy_type: options?.proxy_type ?? "http",
+    host,
+    port,
+    username: username || undefined,
+    password: password || undefined,
+  };
+}
+
+/** Add a proxy from connection string (host:port:username:password). */
+export async function addProxyFromConnectionString(
+  connectionString: string,
+  options?: { name?: string; proxy_type?: "http" | "https" | "socks5" },
+): Promise<Proxy> {
+  const payload = parseProxyConnectionString(connectionString, options);
+  if (!payload) {
+    throw new Error(
+      "Invalid format. Use host:port:username:password (e.g. proxy.example.com:1080:USERNAME:PASSWORD)",
+    );
+  }
+  return addProxy(payload);
+}
+
+export type BulkAddProxyFailure = { line: string; error: string };
+
+/** Add multiple proxies from connection strings (one per line). */
+export async function addProxiesFromConnectionStrings(
+  connectionStrings: string[],
+  options?: { name?: string; proxy_type?: "http" | "https" | "socks5" },
+): Promise<{ added: Proxy[]; failed: BulkAddProxyFailure[] }> {
+  const added: Proxy[] = [];
+  const failed: BulkAddProxyFailure[] = [];
+
+  for (const s of connectionStrings) {
+    const line = (s ?? "").trim();
+    if (!line) continue;
+    try {
+      const proxy = await addProxyFromConnectionString(line, options);
+      added.push(proxy);
+    } catch (e) {
+      failed.push({ line, error: String(e) });
+    }
+  }
+
+  return { added, failed };
 }
 
 /** Detect whether a proxy record was created from BrightData */
@@ -340,7 +425,8 @@ async function loadProxies(): Promise<void> {
 }
 
 async function addProxy(payload: AddProxyPayload): Promise<Proxy> {
-  const raw = await safeInvoke<Proxy>("add_proxy", {
+  const invoke = await requireInvoke();
+  const raw = await invoke<Proxy>("add_proxy", {
     name: payload.name,
     proxyType: payload.proxy_type,
     host: payload.host,
@@ -349,10 +435,6 @@ async function addProxy(payload: AddProxyPayload): Promise<Proxy> {
     password: payload.password ?? null,
     country: payload.country ?? null,
   });
-
-  if (!raw) {
-    throw new Error("Failed to add proxy: Tauri unavailable");
-  }
 
   // Backend strips password via #[serde(skip_serializing)].
   // Preserve it client-side so the automation bridge can authenticate.
@@ -380,7 +462,8 @@ async function updateProxy(
   id: string,
   payload: UpdateProxyPayload,
 ): Promise<Proxy> {
-  const raw = await safeInvoke<Proxy>("update_proxy", {
+  const invoke = await requireInvoke();
+  const raw = await invoke<Proxy>("update_proxy", {
     id,
     name: payload.name ?? null,
     proxyType: payload.proxy_type ?? null,
@@ -390,10 +473,6 @@ async function updateProxy(
     password: payload.password ?? null,
     country: payload.country ?? null,
   });
-
-  if (!raw) {
-    throw new Error("Failed to update proxy: Tauri unavailable");
-  }
 
   // Backend strips password via #[serde(skip_serializing)].
   // If the payload included a new password, keep it client-side.
@@ -410,7 +489,8 @@ async function updateProxy(
 }
 
 async function deleteProxy(id: string): Promise<void> {
-  await safeInvoke("delete_proxy", { id });
+  const invoke = await requireInvoke();
+  await invoke("delete_proxy", { id });
   proxies = proxies.filter((p) => p.id !== id);
   const { [id]: _removed, ...rest } = healthResults;
   healthResults = rest;
@@ -426,11 +506,8 @@ async function checkProxy(id: string): Promise<ProxyHealth> {
   checking = next;
 
   try {
-    const result = await safeInvoke<ProxyHealth>("check_proxy", { id });
-
-    if (!result) {
-      throw new Error("Failed to check proxy: Tauri unavailable");
-    }
+    const invoke = await requireInvoke();
+    const result = await invoke<ProxyHealth>("check_proxy", { id });
 
     // Update the proxy's health fields in-place
     proxies = proxies.map((p) =>
@@ -455,11 +532,8 @@ async function checkProxy(id: string): Promise<ProxyHealth> {
 async function checkAllProxies(): Promise<ProxyHealth[]> {
   checkingAll = true;
   try {
-    const results = await safeInvoke<ProxyHealth[]>("check_all_proxies");
-
-    if (!results) {
-      throw new Error("Failed to check proxies: Tauri unavailable");
-    }
+    const invoke = await requireInvoke();
+    const results = await invoke<ProxyHealth[]>("check_all_proxies");
 
     // Merge results into state
     const resultMap: Record<string, ProxyHealth> = {};
@@ -616,6 +690,8 @@ export const proxyStore = {
   // ── CRUD ──────────────────────────────────────────────────────────────────
   loadProxies,
   addProxy,
+  addProxyFromConnectionString,
+  addProxiesFromConnectionStrings,
   addBrightDataSticky,
   addBrightDataRotating,
   updateProxy,
@@ -636,4 +712,7 @@ export const proxyStore = {
   // ── BrightData builders ───────────────────────────────────────────────────
   buildBrightDataSticky,
   buildBrightDataRotating,
+
+  // ── Connection string ───────────────────────────────────────────────────
+  parseProxyConnectionString,
 };

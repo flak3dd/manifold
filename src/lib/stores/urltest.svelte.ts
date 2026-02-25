@@ -52,6 +52,38 @@ export interface UrlTest {
 let tests = $state<UrlTest[]>([]);
 let activeTestId = $state<string | null>(null);
 
+// Watchdog: if the scraper never responds with complete/error, don't hang forever.
+const URL_TEST_WATCHDOG_MS = 120_000;
+const _watchdogs = new Map<string, ReturnType<typeof setTimeout>>();
+
+function _clearWatchdog(testId: string): void {
+  const h = _watchdogs.get(testId);
+  if (h) clearTimeout(h);
+  _watchdogs.delete(testId);
+}
+
+function _armWatchdog(testId: string): void {
+  _clearWatchdog(testId);
+  const h = setTimeout(() => {
+    const t = tests.find((x) => x.id === testId);
+    if (!t || t.status !== "running") return;
+    tests = tests.map((x) =>
+      x.id === testId
+        ? {
+            ...x,
+            status: "error" as const,
+            finishedAt: new Date().toISOString(),
+            error:
+              "URL test timed out waiting for scraper response. Check `npm run scraper` logs and try again.",
+            progress: null,
+          }
+        : x,
+    );
+    _clearWatchdog(testId);
+  }, URL_TEST_WATCHDOG_MS);
+  _watchdogs.set(testId, h);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Derived
 // ─────────────────────────────────────────────────────────────────────────────
@@ -71,6 +103,7 @@ function handleMessage(msg: WsServerMessage): void {
     case "url_test_progress": {
       const test = tests.find((t) => t.id === msg.testId);
       if (!test) return;
+      _armWatchdog(msg.testId);
       tests = tests.map((t) =>
         t.id === msg.testId
           ? {
@@ -90,6 +123,7 @@ function handleMessage(msg: WsServerMessage): void {
     case "url_test_result": {
       const test = tests.find((t) => t.id === msg.testId);
       if (!test) return;
+      _armWatchdog(msg.testId);
       tests = tests.map((t) =>
         t.id === msg.testId
           ? { ...t, results: [...t.results, msg.result] }
@@ -99,6 +133,7 @@ function handleMessage(msg: WsServerMessage): void {
     }
 
     case "url_test_forms": {
+      _armWatchdog(msg.testId);
       tests = tests.map((t) =>
         t.id === msg.testId ? { ...t, forms: msg.forms } : t,
       );
@@ -106,6 +141,7 @@ function handleMessage(msg: WsServerMessage): void {
     }
 
     case "url_test_login": {
+      _armWatchdog(msg.testId);
       tests = tests.map((t) =>
         t.id === msg.testId ? { ...t, loginResult: msg.login } : t,
       );
@@ -113,6 +149,7 @@ function handleMessage(msg: WsServerMessage): void {
     }
 
     case "url_test_complete": {
+      _clearWatchdog(msg.testId);
       tests = tests.map((t) =>
         t.id === msg.testId
           ? {
@@ -131,6 +168,7 @@ function handleMessage(msg: WsServerMessage): void {
     }
 
     case "url_test_error": {
+      _clearWatchdog(msg.testId);
       tests = tests.map((t) =>
         t.id === msg.testId
           ? {
@@ -202,6 +240,7 @@ function startTest(
 
   tests = [test, ...tests];
   activeTestId = testId;
+  _armWatchdog(testId);
 
   // Send test request via WS
   const sent = ws.send({
@@ -213,6 +252,7 @@ function startTest(
   } as any);
 
   if (!sent) {
+    _clearWatchdog(testId);
     tests = tests.map((t) =>
       t.id === testId
         ? {
@@ -235,6 +275,7 @@ function setActiveTest(id: string | null): void {
 }
 
 function deleteTest(id: string): void {
+  _clearWatchdog(id);
   tests = tests.filter((t) => t.id !== id);
   if (activeTestId === id) {
     activeTestId = tests.length > 0 ? tests[0].id : null;
@@ -242,6 +283,9 @@ function deleteTest(id: string): void {
 }
 
 function clearHistory(): void {
+  for (const t of tests) {
+    if (t.status !== "running") _clearWatchdog(t.id);
+  }
   tests = tests.filter((t) => t.status === "running");
   if (activeTestId && !tests.find((t) => t.id === activeTestId)) {
     activeTestId = tests.length > 0 ? tests[0].id : null;

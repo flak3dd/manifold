@@ -26,6 +26,32 @@
     let toastTimeout: ReturnType<typeof setTimeout> | null = null;
     let standaloneMode = $state(false);
 
+    // ── Bulk fingerprints for automation (AmIUnique-tested) ─────────────────────
+    const AMIUNIQUE_URL = 'https://www.amiunique.org/';
+    let bulkCount = $state(10);
+    let bulkGenerating = $state(false);
+    let bulkResult = $state<{ seed: number; name: string }[]>([]);
+
+    async function handleBulkGenerate() {
+        const count = Math.min(50, Math.max(1, Math.floor(bulkCount) || 10));
+        bulkGenerating = true;
+        bulkResult = [];
+        try {
+            for (let i = 0; i < count; i++) {
+                const newFp = await profileStore.generateFingerprint();
+                const name = `Auto-${newFp.seed.toString(16).slice(0, 6).toUpperCase()}`;
+                await profileStore.createProfile({ name, seed: newFp.seed });
+                bulkResult = [...bulkResult, { seed: newFp.seed, name }];
+            }
+            await profileStore.loadProfiles();
+            showToast(`Created ${count} profiles for automation. Test each on AmIUnique.org.`);
+        } catch (e) {
+            showToast(`Bulk generate failed: ${e}`);
+        } finally {
+            bulkGenerating = false;
+        }
+    }
+
     // ── Lifecycle ──────────────────────────────────────────────────────────────
     onMount(async () => {
         if (profileStore.profiles.length === 0) {
@@ -116,7 +142,7 @@
         try {
             const profile = await profileStore.createProfile({
                 name: `FP-${fp.seed.toString(16).slice(0, 6).toUpperCase()}`,
-                fingerprint: fp,
+                seed: fp.seed,
             });
             selectedProfileId = profile.id;
             standaloneMode = false;
@@ -441,6 +467,43 @@
                     </div>
                 </div>
             {/if}
+
+            <!-- Bulk fingerprints for automation (AmIUnique) -->
+            <div class="bulk-section">
+                <span class="section-label">Bulk for automation</span>
+                <p class="bulk-hint">Create many profiles for automation; test each on AmIUnique.org.</p>
+                <div class="bulk-row">
+                    <input
+                        type="number"
+                        class="input bulk-input"
+                        min="1"
+                        max="50"
+                        bind:value={bulkCount}
+                        disabled={bulkGenerating}
+                    />
+                    <button
+                        class="btn-primary bulk-btn"
+                        onclick={handleBulkGenerate}
+                        disabled={bulkGenerating}
+                    >
+                        {bulkGenerating ? 'Generating…' : 'Generate & save'}
+                    </button>
+                </div>
+                {#if bulkResult.length > 0}
+                    <div class="bulk-result">
+                        <p class="bulk-result-title">{bulkResult.length} profiles saved. Test on AmIUnique:</p>
+                        <a href={AMIUNIQUE_URL} target="_blank" rel="noopener noreferrer" class="bulk-amiunique-link">Open AmIUnique.org →</a>
+                        <ul class="bulk-seed-list">
+                            {#each bulkResult as item (item.seed)}
+                                <li class="bulk-seed-item">
+                                    <span class="mono">{item.name}</span>
+                                    <span class="bulk-seed-mono">seed {item.seed}</span>
+                                </li>
+                            {/each}
+                        </ul>
+                    </div>
+                {/if}
+            </div>
         </div>
 
         <!-- ── Right: editor ── -->
@@ -1829,6 +1892,73 @@
     }
     .icon-btn.danger:hover {
         background: rgba(239, 68, 68, 0.1);
+    }
+
+    /* ── Bulk for automation ── */
+    .bulk-section {
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+    }
+    .bulk-hint {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin: 0.25rem 0 0.5rem;
+    }
+    .bulk-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+    .bulk-input {
+        width: 56px;
+        padding: 6px 8px;
+        font-size: 12px;
+    }
+    .bulk-btn {
+        flex: 1;
+        font-size: 12px;
+        padding: 6px 12px;
+    }
+    .bulk-result {
+        margin-top: 0.75rem;
+        padding: 0.5rem 0;
+    }
+    .bulk-result-title {
+        font-size: 11px;
+        color: var(--text-secondary);
+        margin: 0 0 0.25rem;
+    }
+    .bulk-amiunique-link {
+        font-size: 12px;
+        color: var(--accent);
+        display: inline-block;
+        margin-bottom: 0.5rem;
+    }
+    .bulk-amiunique-link:hover {
+        text-decoration: underline;
+    }
+    .bulk-seed-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        max-height: 140px;
+        overflow-y: auto;
+    }
+    .bulk-seed-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 0;
+        font-size: 11px;
+        border-bottom: 1px solid var(--border);
+    }
+    .bulk-seed-item:last-child {
+        border-bottom: none;
+    }
+    .bulk-seed-mono {
+        font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+        color: var(--text-muted);
     }
 
     /* ── Toast ── */

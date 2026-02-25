@@ -505,6 +505,7 @@
                 <span class="section-label">Screenshot</span>
                 <button
                     class="icon-btn"
+                    aria-label="Close screenshot preview"
                     onclick={() => {
                         showScreenshotLightbox = null;
                     }}
@@ -694,8 +695,9 @@
         {#if showLoginFields}
             <div class="login-fields fade-in">
                 <div class="login-field">
-                    <label class="field-label">Username / Email</label>
+                    <label class="field-label" for="urltest-username">Username / Email</label>
                     <input
+                        id="urltest-username"
                         class="input mono"
                         type="text"
                         placeholder="user@example.com"
@@ -706,9 +708,10 @@
                     />
                 </div>
                 <div class="login-field">
-                    <label class="field-label">Password</label>
+                    <label class="field-label" for="urltest-password">Password</label>
                     <div class="password-wrap">
                         <input
+                            id="urltest-password"
                             class="input mono password-input"
                             type={showPassword ? "text" : "password"}
                             placeholder="password"
@@ -1428,24 +1431,22 @@
                                         <span class="section-label"
                                             >Pre-Login (Form)</span
                                         >
-                                        <img
-                                            src="data:image/png;base64,{lr.preLoginScreenshot}"
-                                            alt="Pre-login screenshot"
-                                            class="screenshot-thumb"
-                                            role="button"
-                                            tabindex="0"
+                                        <button
+                                            class="thumb-btn"
+                                            type="button"
+                                            aria-label="Open pre-login screenshot"
                                             onclick={() => {
                                                 showScreenshotLightbox =
                                                     "data:image/png;base64," +
                                                     lr.preLoginScreenshot;
                                             }}
-                                            onkeydown={(e) => {
-                                                if (e.key === "Enter")
-                                                    showScreenshotLightbox =
-                                                        "data:image/png;base64," +
-                                                        lr.preLoginScreenshot;
-                                            }}
-                                        />
+                                        >
+                                            <img
+                                                src="data:image/png;base64,{lr.preLoginScreenshot}"
+                                                alt="Pre-login screenshot"
+                                                class="screenshot-thumb"
+                                            />
+                                        </button>
                                     </div>
                                 {/if}
                                 {#if lr.screenshot}
@@ -1453,24 +1454,22 @@
                                         <span class="section-label"
                                             >Post-Login Result</span
                                         >
-                                        <img
-                                            src="data:image/png;base64,{lr.screenshot}"
-                                            alt="Post-login screenshot"
-                                            class="screenshot-thumb"
-                                            role="button"
-                                            tabindex="0"
+                                        <button
+                                            class="thumb-btn"
+                                            type="button"
+                                            aria-label="Open post-login screenshot"
                                             onclick={() => {
                                                 showScreenshotLightbox =
                                                     "data:image/png;base64," +
                                                     lr.screenshot;
                                             }}
-                                            onkeydown={(e) => {
-                                                if (e.key === "Enter")
-                                                    showScreenshotLightbox =
-                                                        "data:image/png;base64," +
-                                                        lr.screenshot;
-                                            }}
-                                        />
+                                        >
+                                            <img
+                                                src="data:image/png;base64,{lr.screenshot}"
+                                                alt="Post-login screenshot"
+                                                class="screenshot-thumb"
+                                            />
+                                        </button>
                                     </div>
                                 {/if}
                             </div>
@@ -1523,22 +1522,22 @@
                         )}
                         {#if dataUrl}
                             <div class="ss-preview">
-                                <img
-                                    src={dataUrl}
-                                    alt="{screenshotTab} screenshot"
-                                    class="ss-img"
-                                    class:ss-tablet={screenshotTab === "tablet"}
-                                    class:ss-mobile={screenshotTab === "mobile"}
-                                    role="button"
-                                    tabindex="0"
+                                <button
+                                    class="thumb-btn"
+                                    type="button"
+                                    aria-label={`Open ${screenshotTab} screenshot`}
                                     onclick={() => {
                                         showScreenshotLightbox = dataUrl;
                                     }}
-                                    onkeydown={(e) => {
-                                        if (e.key === "Enter")
-                                            showScreenshotLightbox = dataUrl;
-                                    }}
-                                />
+                                >
+                                    <img
+                                        src={dataUrl}
+                                        alt="{screenshotTab} screenshot"
+                                        class="ss-img"
+                                        class:ss-tablet={screenshotTab === "tablet"}
+                                        class:ss-mobile={screenshotTab === "mobile"}
+                                    />
+                                </button>
                             </div>
                         {/if}
                     {/if}
@@ -1594,8 +1593,9 @@
 
                         <div class="create-grid">
                             <div class="create-field">
-                                <label class="field-label">Profile Name</label>
+                                <label class="field-label" for="urltest-profile-name">Profile Name</label>
                                 <input
+                                    id="urltest-profile-name"
                                     type="text"
                                     class="input"
                                     bind:value={profileName}
@@ -1604,10 +1604,11 @@
                             </div>
 
                             <div class="create-field">
-                                <label class="field-label"
+                                <label class="field-label" for="urltest-proxy-id"
                                     >Proxy (Optional)</label
                                 >
                                 <select
+                                    id="urltest-proxy-id"
                                     class="input"
                                     bind:value={selectedProxyId}
                                 >
@@ -1622,10 +1623,11 @@
                             </div>
 
                             <div class="create-field">
-                                <label class="field-label"
+                                <label class="field-label" for="urltest-behavior"
                                     >Behavior Profile</label
                                 >
                                 <select
+                                    id="urltest-behavior"
                                     class="input"
                                     bind:value={selectedBehavior}
                                 >
@@ -1643,9 +1645,10 @@
                             </div>
 
                             <div class="create-field">
-                                <label class="field-label">Tags</label>
+                                <label class="field-label" for="urltest-tags">Tags</label>
                                 <div class="tags-input-wrap">
                                     <input
+                                        id="urltest-tags"
                                         type="text"
                                         class="input"
                                         bind:value={tagInput}
@@ -1817,6 +1820,7 @@
                                     {/if}
                                     <button
                                         class="icon-btn danger"
+                                        aria-label="Delete test"
                                         style="margin-left:auto"
                                         onclick={(e) => {
                                             e.stopPropagation();
@@ -2647,6 +2651,14 @@
         flex-wrap: wrap;
         gap: 4px;
         margin-top: 6px;
+    }
+
+    .thumb-btn {
+        display: inline-flex;
+        padding: 0;
+        border: none;
+        background: transparent;
+        cursor: pointer;
     }
 
     .screenshot-thumb {

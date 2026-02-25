@@ -605,11 +605,42 @@ export interface UrlTestLoginResult {
   rateLimitSignals?: string[];
 }
 
+// ── Login form selector scrape (scraper WS) ───────────────────────────────────
+
+export interface ScrapedFormSelectors {
+  url: string;
+  username_selector?: string;
+  password_selector?: string;
+  submit_selector?: string;
+  success_selector?: string;
+  failure_selector?: string;
+  captcha_selector?: string;
+  consent_selector?: string;
+  totp_selector?: string;
+  mfa_selector?: string;
+  confidence: number;
+  details: string[];
+  isSPA?: boolean;
+  spaFramework?: string;
+  hasCaptcha?: boolean;
+  captchaProviders?: string[];
+  hasMFA?: boolean;
+  mfaType?:
+    | "totp"
+    | "sms"
+    | "email"
+    | "push"
+    | "security_key"
+    | "unknown";
+  error?: string;
+}
+
 // ── WebSocket message types ───────────────────────────────────────────────────
 
 export type WsClientMessage =
   | { type: "scrape"; sourceId: string; url: string; selector: string }
   | { type: "ping" }
+  | { type: "scrape_form"; requestId: string; url: string; timeout?: number }
   | {
       type: "url_test";
       testId: string;
@@ -623,6 +654,7 @@ export type WsServerMessage =
   | { type: "result"; sourceId: string; content: string[]; durationMs: number }
   | { type: "error"; sourceId: string; message: string }
   | { type: "pong" }
+  | { type: "scrape_form_result"; requestId: string; result: ScrapedFormSelectors }
   | {
       type: "url_test_progress";
       testId: string;

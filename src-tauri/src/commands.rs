@@ -22,6 +22,7 @@ use url;
 // Form scraper types
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 // ── Shared app state ──────────────────────────────────────────────────────────
 
@@ -36,6 +37,8 @@ pub struct AppState {
     pub bridge_port: Mutex<u16>,
     /// Port for TLS bridge server (JA4 control).
     pub tls_bridge_port: Mutex<u16>,
+    /// PID of the running scraper process (if any).
+    pub scraper_pid: Mutex<Option<u32>>,
     /// Master key for AES-GCM field encryption (set once at startup).
     pub master_key: Option<String>,
 }
@@ -51,7 +54,28 @@ impl AppState {
             bridge_pid: Mutex::new(None),
             bridge_port: Mutex::new(8766),
             tls_bridge_port: Mutex::new(8767),
+            scraper_pid: Mutex::new(None),
             master_key,
+        }
+    }
+}
+
+fn kill_process_pid(pid: u32, include_children: bool) {
+    #[cfg(target_os = "windows")]
+    {
+        let pid_str = pid.to_string();
+        let mut cmd = std::process::Command::new("taskkill");
+        cmd.args(["/PID", &pid_str, "/F"]);
+        if include_children {
+            cmd.arg("/T");
+        }
+        cmd.output().ok();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = include_children;
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
         }
     }
 }
@@ -284,6 +308,11 @@ pub fn launch_profile(
     use crate::error::ManifoldError;
     use std::process::{Command, Stdio};
 
+    // Stop any existing bridge before launching a new one for this profile.
+    if let Some(old_pid) = state.bridge_pid.lock().unwrap().take() {
+        kill_process_pid(old_pid, true);
+    }
+
     // Retrieve the profile and (optionally) its proxy
     let profile = state.profiles.lock().unwrap().get(&id)?;
     let proxy = match &profile.proxy_id {
@@ -349,6 +378,41 @@ pub fn launch_profile(
     Ok(port)
 }
 
+/// Start the playwright bridge in background using default config (dev profile).
+/// Useful for packaged app startup so bridge WS is available immediately.
+#[tauri::command]
+pub fn start_bridge(state: State<'_, AppState>) -> Result<u16> {
+    use crate::error::ManifoldError;
+    use std::process::{Command, Stdio};
+
+    // Already running
+    if state.bridge_pid.lock().unwrap().is_some() {
+        let port = *state.bridge_port.lock().unwrap();
+        return Ok(port);
+    }
+
+    let workspace = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    let bridge_path = workspace.join("playwright-bridge").join("index.ts");
+    if !bridge_path.exists() {
+        return Err(ManifoldError::BridgeOffline);
+    }
+
+    let child = Command::new("npx")
+        .args([
+            "tsx",
+            bridge_path.to_str().unwrap_or("playwright-bridge/index.ts"),
+        ])
+        .current_dir(&workspace)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| ManifoldError::Other(format!("failed to spawn bridge: {e}")))?;
+
+    *state.bridge_pid.lock().unwrap() = Some(child.id());
+    let port = *state.bridge_port.lock().unwrap();
+    Ok(port)
+}
+
 /// Directly set a profile's status (used by panic shutdown).
 #[tauri::command]
 pub fn set_profile_status(state: State<'_, AppState>, id: String, status: String) -> Result<()> {
@@ -386,6 +450,11 @@ pub fn panic_shutdown(state: State<'_, AppState>) -> Result<PanicShutdownResult>
     }
     drop(pid_guard);
 
+    // Also stop scraper sidecar if running.
+    if let Some(scraper_pid) = state.scraper_pid.lock().unwrap().take() {
+        kill_process_pid(scraper_pid, true);
+    }
+
     // ── 2. Mark all running profiles as idle ──────────────────────────────
     let mut stopped_profiles: Vec<String> = Vec::new();
     let profiles_guard = state.profiles.lock().unwrap();
@@ -417,20 +486,7 @@ pub fn stop_bridge(state: State<'_, AppState>, profile_id: Option<String>) -> Re
     let mut pid_guard = state.bridge_pid.lock().unwrap();
 
     if let Some(pid) = pid_guard.take() {
-        // Platform-specific kill
-        #[cfg(target_os = "windows")]
-        {
-            std::process::Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/F"])
-                .output()
-                .ok();
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
-        }
+        kill_process_pid(pid, true);
     }
 
     // Mark profile idle
@@ -443,6 +499,46 @@ pub fn stop_bridge(state: State<'_, AppState>, profile_id: Option<String>) -> Re
             .ok();
     }
 
+    Ok(())
+}
+
+/// Start scraper WebSocket sidecar process (scripts/scraper.ts).
+#[tauri::command]
+pub fn start_scraper(state: State<'_, AppState>) -> Result<()> {
+    use crate::error::ManifoldError;
+    use std::process::{Command, Stdio};
+
+    if state.scraper_pid.lock().unwrap().is_some() {
+        return Ok(());
+    }
+
+    let workspace = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    let scraper_path = workspace.join("scripts").join("scraper.ts");
+    if !scraper_path.exists() {
+        return Err(ManifoldError::Other(format!(
+            "scraper script not found: {}",
+            scraper_path.to_string_lossy()
+        )));
+    }
+
+    let child = Command::new("npx")
+        .args(["tsx", scraper_path.to_str().unwrap_or("scripts/scraper.ts")])
+        .current_dir(&workspace)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| ManifoldError::Other(format!("failed to spawn scraper: {e}")))?;
+
+    *state.scraper_pid.lock().unwrap() = Some(child.id());
+    Ok(())
+}
+
+/// Stop scraper sidecar process.
+#[tauri::command]
+pub fn stop_scraper(state: State<'_, AppState>) -> Result<()> {
+    if let Some(pid) = state.scraper_pid.lock().unwrap().take() {
+        kill_process_pid(pid, true);
+    }
     Ok(())
 }
 
@@ -653,6 +749,105 @@ pub fn get_app_info(app: tauri::AppHandle, state: State<'_, AppState>) -> AppInf
         db_path: db_path.to_string_lossy().into_owned(),
         data_dir: data_dir.to_string_lossy().into_owned(),
     }
+}
+
+// ── First-run bootstrap commands ───────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BootstrapStep {
+    pub id: String,
+    pub label: String,
+    pub required: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BootstrapPlan {
+    pub required: bool,
+    pub steps: Vec<BootstrapStep>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BootstrapStepResult {
+    pub id: String,
+    pub success: bool,
+    pub output: String,
+}
+
+fn run_bootstrap_command(workspace: &Path, cmd: &str, args: &[&str]) -> Result<String> {
+    use crate::error::ManifoldError;
+    use std::process::Command;
+
+    let output = Command::new(cmd)
+        .args(args)
+        .current_dir(workspace)
+        .output()
+        .map_err(|e| ManifoldError::Other(format!("failed to run {cmd}: {e}")))?;
+
+    let mut text = String::new();
+    text.push_str(&String::from_utf8_lossy(&output.stdout));
+    if !output.stderr.is_empty() {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&String::from_utf8_lossy(&output.stderr));
+    }
+
+    if output.status.success() {
+        Ok(text)
+    } else {
+        Err(ManifoldError::Other(format!(
+            "{cmd} {:?} failed (code {:?}): {}",
+            args,
+            output.status.code(),
+            text
+        )))
+    }
+}
+
+#[tauri::command]
+pub fn bootstrap_check() -> Result<BootstrapPlan> {
+    let workspace = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    let node_modules_exists = workspace.join("node_modules").exists();
+
+    let mut steps = Vec::new();
+    steps.push(BootstrapStep {
+        id: "npm_install".into(),
+        label: "Install Node dependencies".into(),
+        required: !node_modules_exists,
+    });
+    // Keep this required so packaged installs can self-heal browser binaries.
+    steps.push(BootstrapStep {
+        id: "playwright_install".into(),
+        label: "Install Playwright browser runtime".into(),
+        required: true,
+    });
+
+    let required = steps.iter().any(|s| s.required);
+    Ok(BootstrapPlan { required, steps })
+}
+
+#[tauri::command]
+pub fn run_bootstrap_step(step: String) -> Result<BootstrapStepResult> {
+    let workspace = std::env::current_dir().unwrap_or_else(|_| ".".into());
+
+    #[cfg(target_os = "windows")]
+    let (npm_cmd, npx_cmd) = ("npm.cmd", "npx.cmd");
+    #[cfg(not(target_os = "windows"))]
+    let (npm_cmd, npx_cmd) = ("npm", "npx");
+
+    let output = match step.as_str() {
+        "npm_install" => run_bootstrap_command(&workspace, npm_cmd, &["install"])?,
+        "playwright_install" => {
+            run_bootstrap_command(&workspace, npx_cmd, &["playwright", "install", "chromium"])?
+        }
+        _ => String::from("Skipped unknown bootstrap step"),
+    };
+
+    Ok(BootstrapStepResult {
+        id: step,
+        success: true,
+        output,
+    })
 }
 
 // ── Form scraper command ──────────────────────────────────────────────────────

@@ -120,30 +120,6 @@
             </span>
         </div>
         <div class="header-actions">
-            <a href="/profiles" class="btn-secondary">
-                <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 13 13"
-                    fill="none"
-                    aria-hidden="true"
-                >
-                    <circle
-                        cx="6.5"
-                        cy="4.5"
-                        r="2.5"
-                        stroke="currentColor"
-                        stroke-width="1.3"
-                    />
-                    <path
-                        d="M2 12c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4"
-                        stroke="currentColor"
-                        stroke-width="1.3"
-                        stroke-linecap="round"
-                    />
-                </svg>
-                Manage Profiles
-            </a>
             <a href="/proxies" class="btn-secondary">
                 <svg
                     width="13"
@@ -293,9 +269,9 @@
                                 No profiles are currently running.
                             </p>
                             <p class="empty-hint">
-                                Launch a profile from the <a href="/profiles"
-                                    >Profiles</a
-                                > page or the sidebar.
+                                Launch a profile from the <a href="/automation"
+                                    >Automation</a
+                                > page.
                             </p>
                         </div>
                     {:else}
@@ -403,7 +379,7 @@
             <div class="panel recent-panel">
                 <div class="panel-header">
                     <span class="panel-title">Recent Profiles</span>
-                    <a href="/profiles" class="panel-link"
+                    <a href="/automation" class="panel-link"
                         >View All ({profiles.length}) →</a
                     >
                 </div>

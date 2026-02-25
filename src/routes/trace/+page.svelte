@@ -264,7 +264,7 @@
 
             // Import traces using the trace importer
             const { importTraceDataset } =
-                await import("../../../human/trace/importer.ts");
+                await import("../../../human/trace/importer");
             const datasetMap = {
                 "attentive-cursor":
                     "https://example.com/attentive-cursor-dataset.json", // Placeholder URLs
@@ -280,11 +280,7 @@
             }
 
             // For demo purposes, use synthetic data
-            const traces = await importTraceDataset(url, {
-                format: selectedDataset as any,
-                minDistance: 10,
-                maxVelocity: 5000,
-            });
+            const traces = await importTraceDataset(url);
 
             tracesImported = traces.length;
             importStatus = {
@@ -321,7 +317,7 @@
         try {
             // Import calibrator and apply to synthetic trace data
             const { calibrateFromTraces } =
-                await import("../../../human/trace/calibrator.ts");
+                await import("../../../human/trace/calibrator");
 
             // Generate synthetic trace data for demonstration
             const syntheticTraces = Array.from({ length: 50 }, (_, i) => ({

@@ -285,7 +285,7 @@
 
 				<!-- Proxy Selection -->
 				<div class="field-group">
-					<label class="field-label">Proxies (Optional)</label>
+					<span class="field-label">Proxies (Optional)</span>
 					{#if proxyList.length > 0}
 						<div class="proxy-header">
 							<button
@@ -538,8 +538,7 @@
 	}
 
 	input[type="text"],
-	input[type="number"],
-	input[type="password"] {
+	input[type="number"] {
 		padding: 8px 12px;
 		border: 1px solid var(--border-color, #e5e7eb);
 		border-radius: 4px;
@@ -550,8 +549,7 @@
 	}
 
 	input[type="text"]:focus,
-	input[type="number"]:focus,
-	input[type="password"]:focus {
+	input[type="number"]:focus {
 		outline: none;
 		border-color: #3b82f6;
 		background: var(--bg-0, #ffffff);

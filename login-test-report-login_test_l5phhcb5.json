@@ -1,0 +1,42 @@
+{
+  "targetUrl": "https://joefortunepokies.win",
+  "startTime": "2026-02-24T00:37:52.286Z",
+  "endTime": "2026-02-24T00:39:27.407Z",
+  "durationMs": 95121,
+  "totalCredentialPairs": 3,
+  "totalAttempts": 12,
+  "results": [
+    {
+      "email": "test1@example.com",
+      "label": "Synthetic Account 1",
+      "attempts": [],
+      "totalAttempts": 4,
+      "uniqueErrors": [],
+      "success": false,
+      "proxySession": "5epbktzf"
+    },
+    {
+      "email": "test2@example.com",
+      "label": "Synthetic Account 2",
+      "attempts": [],
+      "totalAttempts": 4,
+      "uniqueErrors": [],
+      "success": false,
+      "proxySession": "aqcj2xzf"
+    },
+    {
+      "email": "test3@example.com",
+      "label": "Synthetic Account 3",
+      "attempts": [],
+      "totalAttempts": 4,
+      "uniqueErrors": [],
+      "success": false,
+      "proxySession": "to3n2462"
+    }
+  ],
+  "proxySessions": [
+    "5epbktzf",
+    "aqcj2xzf",
+    "to3n2462"
+  ]
+}

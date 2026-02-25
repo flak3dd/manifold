@@ -165,6 +165,18 @@ async function startScraper(): Promise<void> {
   }
 }
 
+async function startBridge(): Promise<void> {
+  try {
+    await safeInvoke("start_bridge");
+  } catch (e) {
+    console.error("[manifold] start_bridge failed:", e);
+  }
+}
+
+async function startServices(): Promise<void> {
+  await Promise.allSettled([startScraper(), startBridge()]);
+}
+
 async function stopScraper(): Promise<void> {
   try {
     await safeInvoke("stop_scraper");
@@ -284,5 +296,7 @@ export const appStore = {
   scrapeSource,
   scrapeAll,
   startScraper,
+  startBridge,
+  startServices,
   stopScraper,
 };

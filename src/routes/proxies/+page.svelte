@@ -5,6 +5,7 @@
         latencyLabel,
         latencyColor,
         proxyServerUrl,
+        parseProxyConnectionString,
     } from "$lib/stores/proxy.svelte";
     import type { Proxy, AddProxyPayload } from "$lib/types";
 
@@ -25,6 +26,19 @@
     let formError = $state("");
     let formSaving = $state(false);
 
+    // Quick-add connection string (host:port:username:password)
+    let quickAddInput = $state("");
+    let quickAddError = $state("");
+    let quickAddSaving = $state(false);
+    let quickAddBulkOpen = $state(false);
+    let bulkAddInput = $state("");
+    let bulkAddSaving = $state(false);
+    let bulkAddResult = $state<{
+        added: number;
+        failed: number;
+        failedLines: { line: string; error: string }[];
+    } | null>(null);
+
     // BrightData form
     let bdCustomer = $state("");
     let bdZone = $state("");
@@ -40,6 +54,12 @@
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────
     onMount(() => {
+        const w = window as any;
+        tauriAvailable =
+            !!w?.__TAURI_INTERNALS__ ||
+            !!w?.__TAURI__ ||
+            (typeof navigator !== "undefined" &&
+                navigator.userAgent.toLowerCase().includes("tauri"));
         proxyStore.loadProxies();
     });
 
@@ -50,6 +70,7 @@
     let checkingAll = $derived(proxyStore.checkingAll);
     let healthyCount = $derived(proxyStore.healthyProxies.length);
     let unhealthyCount = $derived(proxyStore.unhealthyProxies.length);
+    let tauriAvailable = $state(false);
 
     // ── Helpers ────────────────────────────────────────────────────────────────
     function openAdd() {
@@ -196,6 +217,74 @@
             rotMode === "interval" ? rotInterval : undefined,
         );
     }
+
+    async function handleQuickAdd() {
+        if (!tauriAvailable) {
+            quickAddError =
+                "Tauri unavailable. Launch the app via `npm run tauri dev` (or run the .exe) to add proxies.";
+            return;
+        }
+        const raw = quickAddInput.trim();
+        if (!raw) {
+            quickAddError = "Paste a connection string";
+            return;
+        }
+        const payload = parseProxyConnectionString(raw);
+        if (!payload) {
+            quickAddError =
+                "Use format host:port:username:password (e.g. proxy.example.com:1080:USERNAME:PASSWORD)";
+            return;
+        }
+        quickAddError = "";
+        quickAddSaving = true;
+        try {
+            await proxyStore.addProxyFromConnectionString(raw);
+            quickAddInput = "";
+        } catch (e) {
+            quickAddError = String(e);
+        } finally {
+            quickAddSaving = false;
+        }
+    }
+
+    async function handleBulkAdd() {
+        if (!tauriAvailable) {
+            bulkAddResult = null;
+            quickAddError =
+                "Tauri unavailable. Launch the app via `npm run tauri dev` (or run the .exe) to add proxies.";
+            return;
+        }
+        const raw = bulkAddInput.trim();
+        if (!raw) {
+            bulkAddResult = null;
+            quickAddError = "Paste one proxy per line";
+            return;
+        }
+        quickAddError = "";
+        bulkAddSaving = true;
+        bulkAddResult = null;
+        try {
+            const lines = raw
+                .split(/\r?\n/g)
+                .map((l) => l.trim())
+                .filter(Boolean);
+            const { added, failed } =
+                await proxyStore.addProxiesFromConnectionStrings(lines);
+            bulkAddResult = {
+                added: added.length,
+                failed: failed.length,
+                failedLines: failed.slice(0, 10), // keep UI small
+            };
+            if (failed.length === 0) {
+                bulkAddInput = "";
+                quickAddBulkOpen = false;
+            }
+        } catch (e) {
+            quickAddError = String(e);
+        } finally {
+            bulkAddSaving = false;
+        }
+    }
 </script>
 
 <!-- ── Page ──────────────────────────────────────────────────────────────────── -->
@@ -292,6 +381,103 @@
                 Add Proxy
             </button>
         </div>
+    </div>
+
+    <!-- ── Quick add: host:port:username:password ───────────────────────────────── -->
+    <div class="quick-add-bar">
+        {#if !tauriAvailable}
+            <span class="quick-add-error"
+                >Desktop runtime not detected. Open Manifold via `npm run tauri
+                dev` or the built `.exe` to add/check proxies.</span
+            >
+        {/if}
+        <input
+            type="text"
+            class="quick-add-input"
+            placeholder="host:port:username:password (e.g. proxy.example.com:1080:USERNAME:PASSWORD)"
+            bind:value={quickAddInput}
+            onkeydown={(e) => e.key === "Enter" && handleQuickAdd()}
+            disabled={quickAddSaving || !tauriAvailable}
+        />
+        <button
+            class="btn-secondary quick-add-btn"
+            onclick={handleQuickAdd}
+            disabled={
+                !tauriAvailable || quickAddSaving || !quickAddInput.trim()
+            }
+        >
+            {quickAddSaving ? "Adding…" : "Quick add"}
+        </button>
+        <button
+            class="btn-secondary quick-add-btn"
+            onclick={() => {
+                quickAddBulkOpen = !quickAddBulkOpen;
+                bulkAddResult = null;
+            }}
+            disabled={!tauriAvailable || bulkAddSaving}
+            title="Paste multiple proxies, one per line"
+        >
+            {quickAddBulkOpen ? "Close bulk" : "Bulk add"}
+        </button>
+        {#if quickAddError}
+            <span class="quick-add-error">{quickAddError}</span>
+        {/if}
+        {#if quickAddBulkOpen}
+            <div class="bulk-add-wrap">
+                <textarea
+                    class="bulk-add-textarea mono"
+                    placeholder="One proxy per line:\nproxy.example.com:1080:USERNAME:PASSWORD\nproxy.example.com:1080:USERNAME:PASSWORD"
+                    bind:value={bulkAddInput}
+                    disabled={!tauriAvailable || bulkAddSaving}
+                ></textarea>
+                <div class="bulk-add-actions">
+                    <button
+                        class="btn-secondary"
+                        onclick={() => {
+                            bulkAddInput = "";
+                            bulkAddResult = null;
+                            quickAddError = "";
+                        }}
+                        disabled={bulkAddSaving}
+                    >
+                        Clear
+                    </button>
+                    <button
+                        class="btn-primary"
+                        onclick={handleBulkAdd}
+                        disabled={
+                            bulkAddSaving || !tauriAvailable || !bulkAddInput.trim()
+                        }
+                    >
+                        {bulkAddSaving ? "Adding…" : "Add all"}
+                    </button>
+                </div>
+                {#if bulkAddResult}
+                    <div class="bulk-add-result">
+                        <span class="muted"
+                            >Added: {bulkAddResult.added} · Failed:
+                            {bulkAddResult.failed}</span
+                        >
+                        {#if bulkAddResult.failedLines.length > 0}
+                            <div class="bulk-add-failures">
+                                {#each bulkAddResult.failedLines as f}
+                                    <div class="bulk-add-failure mono">
+                                        {f.line} → {f.error}
+                                    </div>
+                                {/each}
+                                {#if bulkAddResult.failed > bulkAddResult.failedLines.length}
+                                    <div class="muted">
+                                        (+{bulkAddResult.failed -
+                                            bulkAddResult.failedLines.length}
+                                        more)
+                                    </div>
+                                {/if}
+                            </div>
+                        {/if}
+                    </div>
+                {/if}
+            </div>
+        {/if}
     </div>
 
     <!-- ── Body ────────────────────────────────────────────────────────────────── -->
@@ -963,6 +1149,93 @@
         gap: 8px;
         align-items: center;
         flex-wrap: wrap;
+    }
+
+    /* ── Quick add bar ── */
+    .quick-add-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 24px 12px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface-2);
+        flex-wrap: wrap;
+    }
+    .quick-add-input {
+        flex: 1;
+        min-width: 200px;
+        padding: 8px 12px;
+        font-size: 13px;
+        font-family: inherit;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        color: var(--text-primary);
+    }
+    .quick-add-input::placeholder {
+        color: var(--text-muted);
+    }
+    .quick-add-btn {
+        flex-shrink: 0;
+    }
+    .quick-add-error {
+        width: 100%;
+        font-size: 12px;
+        color: var(--error);
+    }
+
+    .bulk-add-wrap {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 6px;
+    }
+
+    .bulk-add-textarea {
+        width: 100%;
+        min-height: 120px;
+        resize: vertical;
+        padding: 10px 12px;
+        font-size: 12px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        color: var(--text-primary);
+        outline: none;
+    }
+
+    .bulk-add-textarea:focus {
+        border-color: var(--border-focus);
+        box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    .bulk-add-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+    }
+
+    .bulk-add-result {
+        padding: 8px 10px;
+        background: var(--surface-3);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+    }
+
+    .bulk-add-failures {
+        margin-top: 6px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .bulk-add-failure {
+        font-size: 11px;
+        color: var(--error);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 
     /* ── Body ── */

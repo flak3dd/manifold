@@ -10,10 +10,10 @@
 
     let {
         onAddSource,
-        onCreateProfile,
+        onCreateProfile = () => {},
     }: {
         onAddSource: () => void;
-        onCreateProfile: () => void;
+        onCreateProfile?: () => void;
     } = $props();
 
     let stats          = $derived(profileStore.globalStats);
@@ -28,12 +28,11 @@
 
     const NAV: { href: string; label: string }[] = [
         { href: "/",            label: "Dashboard"   },
-        { href: "/profiles",    label: "Profiles"    },
-        { href: "/proxies",     label: "Proxies"     },
+        { href: "/proxies",     label: "Proxies"    },
         { href: "/fingerprint", label: "Fingerprint" },
-        { href: "/automation",  label: "Automation"  },
-        { href: "/url-test",    label: "URL Test"    },
-        { href: "/trace",       label: "Trace"       },
+        { href: "/automation",  label: "Automation" },
+        { href: "/url-test",    label: "URL Test"   },
+        { href: "/trace",       label: "Trace"     },
     ];
 
     function isActive(href: string): boolean {
@@ -68,9 +67,6 @@
                 class:active
             >
                 {item.label}
-                {#if item.href === "/profiles" && stats.profiles_running > 0}
-                    <span class="nav-pip running">{stats.profiles_running}</span>
-                {/if}
                 {#if item.href === "/trace" && bridgeSession}
                     <span class="nav-pip live">●</span>
                 {/if}
@@ -89,13 +85,6 @@
 
     <!-- ── Right: actions ─────────────────────────────────────────── -->
     <div class="topbar-actions">
-        <button class="new-btn" onclick={onCreateProfile} title="New Profile  [N]">
-            <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
-                <path d="M5.5 1v9M1 5.5h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-            </svg>
-            New Profile
-        </button>
-        <div class="topbar-divider"></div>
         <PanicButton />
     </div>
 </header>
@@ -275,33 +264,6 @@
         gap: 8px;
         margin-left: auto;
         flex-shrink: 0;
-    }
-
-    .topbar-divider {
-        width: 1px;
-        height: 18px;
-        background: var(--border-subtle);
-        flex-shrink: 0;
-    }
-
-    .new-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 4px 12px;
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.02em;
-        color: var(--bg);
-        background: var(--accent);
-        border: none;
-        border-radius: var(--radius-sm);
-        cursor: pointer;
-        transition: background 0.12s, opacity 0.12s;
-    }
-
-    .new-btn:hover {
-        background: var(--accent-dim);
     }
 
     /* ── Status bar ──────────────────────────────────────────────── */

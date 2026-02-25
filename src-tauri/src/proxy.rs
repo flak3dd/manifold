@@ -358,36 +358,82 @@ impl ProxyRepo {
     // ── Internal HTTP check ───────────────────────────────────────────────────
 
     fn do_http_check(proxy: &Proxy) -> std::result::Result<u32, String> {
-        use std::net::TcpStream;
+        use std::net::{TcpStream, ToSocketAddrs};
 
-        const CHECK_HOST: &str = "checkip.amazonaws.com";
+        // Some residential/mobile pools can block or throttle specific health hosts.
+        // Try several lightweight endpoints before declaring the proxy unhealthy.
+        const CHECK_HOSTS: [&str; 3] = ["checkip.amazonaws.com", "api.ipify.org", "example.com"];
         const TIMEOUT_SECS: u64 = 10;
 
-        let proxy_addr = format!("{}:{}", proxy.host, proxy.port);
-        let t0 = Instant::now();
-
-        // Open TCP connection to the proxy server
-        let stream = TcpStream::connect_timeout(
-            &proxy_addr
-                .parse()
-                .map_err(|e| format!("invalid proxy address: {e}"))?,
-            Duration::from_secs(TIMEOUT_SECS),
-        )
-        .map_err(|e| format!("TCP connect to proxy failed: {e}"))?;
-
-        stream
-            .set_read_timeout(Some(Duration::from_secs(TIMEOUT_SECS)))
-            .ok();
-        stream
-            .set_write_timeout(Some(Duration::from_secs(TIMEOUT_SECS)))
-            .ok();
-
-        match proxy.proxy_type {
-            ProxyType::Http | ProxyType::Https => {
-                Self::http_connect_check(stream, proxy, CHECK_HOST, t0)
-            }
-            ProxyType::Socks5 => Self::socks5_check(stream, proxy, CHECK_HOST, t0),
+        // NOTE: Many proxies are provided as hostnames (e.g. proxy.example.com),
+        // not raw IPs. We must resolve DNS before using connect_timeout.
+        let addrs = (proxy.host.as_str(), proxy.port)
+            .to_socket_addrs()
+            .map_err(|e| format!("DNS resolve failed for {}:{}: {e}", proxy.host, proxy.port))?
+            .collect::<Vec<_>>();
+        if addrs.is_empty() {
+            return Err(format!(
+                "DNS resolve returned no addresses for {}:{}",
+                proxy.host, proxy.port
+            ));
         }
+
+        let mut errors = Vec::with_capacity(CHECK_HOSTS.len());
+
+        for target in CHECK_HOSTS {
+            let t0 = Instant::now();
+
+            // Open a fresh TCP connection to the proxy for each target check.
+            let mut last_err: Option<String> = None;
+            let stream = addrs
+                .iter()
+                .find_map(|addr| match TcpStream::connect_timeout(addr, Duration::from_secs(TIMEOUT_SECS))
+                {
+                    Ok(s) => Some(s),
+                    Err(e) => {
+                        last_err = Some(format!("{addr}: {e}"));
+                        None
+                    }
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "TCP connect to proxy failed for {}:{} ({})",
+                        proxy.host,
+                        proxy.port,
+                        last_err.unwrap_or_else(|| "no addresses".into())
+                    )
+                })?;
+
+            stream
+                .set_read_timeout(Some(Duration::from_secs(TIMEOUT_SECS)))
+                .ok();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(TIMEOUT_SECS)))
+                .ok();
+
+            let result = match proxy.proxy_type {
+                ProxyType::Http | ProxyType::Https => {
+                    Self::http_connect_check(stream, proxy, target, t0)
+                }
+                ProxyType::Socks5 => Self::socks5_check(stream, proxy, target, t0),
+            };
+
+            match result {
+                Ok(ms) => return Ok(ms),
+                Err(e) => {
+                    // Authentication errors are deterministic; no need to retry other targets.
+                    if e.contains("authentication failed") || e.contains("407") {
+                        return Err(e);
+                    }
+                    errors.push(format!("{target}: {e}"));
+                }
+            }
+        }
+
+        Err(format!(
+            "all health checks failed ({})",
+            errors.join(" | ")
+        ))
     }
 
     /// HTTP proxy check using standard GET request (not CONNECT tunnel).
@@ -422,16 +468,15 @@ impl ProxyRepo {
             .read_line(&mut line)
             .map_err(|e| format!("read HTTP response: {e}"))?;
 
-        // Accept any 2xx or 3xx status as healthy
-        // Common responses: 200 OK, 301/302 redirects
-        if !line.contains(" 2") && !line.contains(" 3") {
+        // A reachable authenticated proxy can still return 4xx/5xx depending on target policy.
+        // Mark as unhealthy only when we clearly have proxy-auth/transport failures.
+        if line.contains("407") {
+            return Err("Proxy authentication failed (407)".into());
+        }
+
+        // Accept any parseable HTTP status as "proxy reachable".
+        if !line.starts_with("HTTP/") {
             // Check for proxy auth errors specifically
-            if line.contains("407") {
-                return Err("Proxy authentication failed (407)".into());
-            }
-            if line.contains("403") {
-                return Err("Proxy access forbidden (403)".into());
-            }
             return Err(format!("HTTP request failed: {}", line.trim()));
         }
 

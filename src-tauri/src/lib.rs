@@ -54,10 +54,14 @@ pub fn run() {
             commands::check_proxy,
             commands::check_all_proxies,
             // ── Bridge / launcher ─────────────────────────────────────────────
+            commands::start_bridge,
             commands::launch_profile,
             commands::stop_bridge,
             commands::get_bridge_url,
             commands::set_bridge_port,
+            // ── Scraper sidecar ───────────────────────────────────────────────
+            commands::start_scraper,
+            commands::stop_scraper,
             // ── TLS Bridge ────────────────────────────────────────────────────
             commands::launch_tls_bridge,
             // ── Emergency ─────────────────────────────────────────────────────
@@ -70,6 +74,8 @@ pub fn run() {
             commands::save_data,
             commands::load_data,
             commands::get_app_info,
+            commands::bootstrap_check,
+            commands::run_bootstrap_step,
             // ── URL Analysis ──────────────────────────────────────────────────
             commands::analyze_url,
             // ── Geo consistency ───────────────────────────────────────────────

@@ -11,15 +11,34 @@
 import { chromium, type Browser, type BrowserContext } from "playwright";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Proxy Configuration (AnyIP.io)
+// Proxy Configuration (via env)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PROXY_CONFIG = {
-  host: "portal.anyip.io",
-  port: 1080,
-  username: "user_375050,type_mobile,country_AU",
-  password: "Plentyon1",
+type ProxyEnvConfig = {
+  scheme: "http" | "https" | "socks5";
+  host: string;
+  port: number;
+  username: string;
+  password: string;
 };
+
+function readProxyFromEnv(): ProxyEnvConfig {
+  const scheme = (process.env.PROXY_SCHEME ?? "http") as ProxyEnvConfig["scheme"];
+  const host = (process.env.PROXY_HOST ?? "").trim();
+  const port = Number.parseInt(process.env.PROXY_PORT ?? "", 10);
+  const username = (process.env.PROXY_USERNAME ?? "").trim();
+  const password = (process.env.PROXY_PASSWORD ?? "").trim();
+
+  if (!host || !Number.isFinite(port) || port < 1 || port > 65535 || !username || !password) {
+    throw new Error(
+      "Missing proxy env vars. Set: PROXY_HOST, PROXY_PORT, PROXY_USERNAME, PROXY_PASSWORD (and optional PROXY_SCHEME=http|https|socks5).",
+    );
+  }
+
+  return { scheme, host, port, username, password };
+}
+
+const PROXY_CONFIG = readProxyFromEnv();
 
 // Test URLs for IP verification
 const IP_CHECK_URLS = [
@@ -49,7 +68,8 @@ function buildProxyUrl(sessionId?: string): string {
   const username = sessionId
     ? `${PROXY_CONFIG.username},session_${sessionId}`
     : PROXY_CONFIG.username;
-  return `http://${PROXY_CONFIG.host}:${PROXY_CONFIG.port}`;
+  void username; // username is applied via Playwright proxy auth object
+  return `${PROXY_CONFIG.scheme}://${PROXY_CONFIG.host}:${PROXY_CONFIG.port}`;
 }
 
 function buildProxyAuth(sessionId?: string): {
@@ -61,7 +81,7 @@ function buildProxyAuth(sessionId?: string): {
     ? `${PROXY_CONFIG.username},session_${sessionId}`
     : PROXY_CONFIG.username;
   return {
-    server: `http://${PROXY_CONFIG.host}:${PROXY_CONFIG.port}`,
+    server: `${PROXY_CONFIG.scheme}://${PROXY_CONFIG.host}:${PROXY_CONFIG.port}`,
     username,
     password: PROXY_CONFIG.password,
   };
@@ -139,8 +159,7 @@ async function testProxyConnection(): Promise<void> {
   log("═".repeat(70));
   log(`Host: ${PROXY_CONFIG.host}`);
   log(`Port: ${PROXY_CONFIG.port}`);
-  log(`Username: ${PROXY_CONFIG.username}`);
-  log(`Password: ${"*".repeat(PROXY_CONFIG.password.length)}`);
+  log(`Auth: enabled (credentials provided via env)`);
   log("");
 
   let browser: Browser | null = null;
@@ -160,7 +179,6 @@ async function testProxyConnection(): Promise<void> {
     log("\n─── Test 1: Basic Proxy Connection ───");
     const basicProxy = buildProxyAuth();
     log(`Proxy URL: ${basicProxy.server}`);
-    log(`Auth User: ${basicProxy.username}`);
 
     const basicResult = await getIPWithProxy(browser, basicProxy, "Basic");
     if (basicResult.ip) {
@@ -185,7 +203,6 @@ async function testProxyConnection(): Promise<void> {
       const rotatedProxy = buildProxyAuth(sessionId);
 
       log(`\nSession ${i}: ${sessionId}`);
-      log(`Auth User: ${rotatedProxy.username}`);
 
       const result = await getIPWithProxy(
         browser,
